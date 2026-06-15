@@ -1,0 +1,176 @@
+import { useEffect } from 'react';
+import { useGenesis } from '../state/store';
+
+const GOAL_LABELS: Record<string, string> = {
+  comprar_carro: '🚗 Comprar carro',
+  comprar_casa: '🏠 Comprar casa',
+  casar: '💍 Casar',
+  abrir_empresa: '🏢 Abrir empresa',
+  enriquecer: '💰 Enriquecer',
+  estudar: '📚 Estudar',
+  arranjar_emprego: '💼 Arranjar emprego',
+  promocao: '📈 Conseguir promoção',
+  virar_atleta: '🏅 Virar atleta profissional',
+};
+
+function Bar({ label, value, max = 100 }: { label: string; value: number; max?: number }) {
+  return (
+    <div className="bar-row">
+      <span>{label}</span>
+      <div className="bar">
+        <div className="bar-fill" style={{ width: `${(value / max) * 100}%` }} />
+      </div>
+      <span className="bar-val">{value}</span>
+    </div>
+  );
+}
+
+/** Ficha completa do cidadão clicado: vida, mente, relações e história. */
+export function CitizenPanel() {
+  const citizen = useGenesis((s) => s.selectedCitizen);
+  const close = useGenesis((s) => s.closeCitizen);
+  const refresh = useGenesis((s) => s.refreshCitizen);
+  const select = useGenesis((s) => s.selectCitizen);
+  const follow = useGenesis((s) => s.follow);
+  const stopFollow = useGenesis((s) => s.stopFollow);
+  const followId = useGenesis((s) => s.followId);
+
+  // atualiza a ficha em tempo real enquanto aberta
+  useEffect(() => {
+    if (!citizen) return;
+    const h = setInterval(refresh, 2000);
+    return () => clearInterval(h);
+  }, [citizen?.id]);
+
+  if (!citizen) return null;
+  const p = citizen.personalidade;
+  const isFollowing = followId === citizen.id;
+
+  return (
+    <div className="panel citizen-panel">
+      <button className="close" onClick={close}>✕</button>
+      <h2>
+        {citizen.prefeito && '🏛️ '}{citizen.nome} {citizen.vivo ? '' : '✝'}
+      </h2>
+      <div className="badges">
+        {citizen.prefeito && <span className="badge gov">Prefeito(a)</span>}
+        {citizen.preso && <span className="badge jail">🚓 Preso</span>}
+        {citizen.criminoso && !citizen.preso && <span className="badge crime">Ficha criminal</span>}
+        {citizen.contasAtrasadas > 0 && <span className="badge debt">{citizen.contasAtrasadas}m em atraso</span>}
+      </div>
+      <div className="subtitle">
+        {citizen.sexo === 'M' ? 'Homem' : 'Mulher'}, {citizen.idade} anos · {citizen.profissao}
+        {citizen.empresa && <> · {citizen.empresa}</>}
+      </div>
+      <div className="subtitle">
+        💵 $ {citizen.dinheiro.toLocaleString('pt-BR')} · {citizen.atividade}
+        {citizen.temCasaPropria && ' · 🏠'}{citizen.temCarro && ' · 🚗'}
+        {' · '}Escolaridade: {citizen.escolaridade}
+      </div>
+      <button
+        className={`follow-btn ${isFollowing ? 'on' : ''}`}
+        onClick={() => (isFollowing ? stopFollow() : follow(citizen.id))}
+      >
+        {isFollowing ? '🎥 Parar de seguir' : '🎥 Seguir com a câmera'}
+      </button>
+
+      <h3>Cidadania & Finanças</h3>
+      <Bar label="Score crédito" value={citizen.scoreCredito} max={850} />
+      {citizen.emprestimos.length === 0 && <div className="muted">Sem empréstimos</div>}
+      {citizen.emprestimos.map((l, i) => (
+        <div key={i} className="loan">
+          {l.kind}: saldo $ {l.saldo.toLocaleString('pt-BR')} · parcela $ {l.parcela.toLocaleString('pt-BR')}/mês · {l.jurosAno}% a.a.
+        </div>
+      ))}
+
+      <h3>Estado</h3>
+      <Bar label="Felicidade" value={citizen.felicidade} />
+      <Bar label="Realização" value={citizen.realizacao} />
+      <Bar label="Saúde" value={citizen.saude} />
+      <Bar label="Energia" value={citizen.energia} />
+      <Bar label="Inteligência" value={citizen.inteligencia} />
+
+      <h3>Cultura & Bem-estar</h3>
+      <div className="subtitle">
+        🎯 Hobby: {citizen.hobby ?? '—'}
+        {citizen.fama > 5 && <> · ⭐ Fama: {citizen.fama}</>}
+      </div>
+      <div className="subtitle">
+        ⛪ Fé: {citizen.religiao ? `${citizen.religiao}` : 'não praticante'}
+        {citizen.religiao && ` (devoção ${citizen.religiosidade})`}
+      </div>
+
+      <h3>Necessidades</h3>
+      <Bar label="Fome" value={citizen.necessidades.fome} />
+      <Bar label="Sono" value={citizen.necessidades.sono} />
+      <Bar label="Social" value={citizen.necessidades.social} />
+      <Bar label="Segurança" value={citizen.necessidades.seguranca} />
+      <Bar label="Diversão" value={citizen.necessidades.diversao} />
+
+      <h3>Personalidade (Big Five)</h3>
+      <Bar label="Abertura" value={Math.round(p.abertura)} />
+      <Bar label="Consciência" value={Math.round(p.consciencia)} />
+      <Bar label="Extroversão" value={Math.round(p.extroversao)} />
+      <Bar label="Amabilidade" value={Math.round(p.amabilidade)} />
+      <Bar label="Neuroticismo" value={Math.round(p.neuroticismo)} />
+
+      <h3>Habilidades</h3>
+      {Object.entries(citizen.habilidades).map(([k, v]) => (
+        <Bar key={k} label={k} value={v} />
+      ))}
+
+      <h3>Objetivos</h3>
+      {citizen.objetivos.length === 0 && <div className="muted">Sem objetivos no momento</div>}
+      {citizen.objetivos.map((g) => (
+        <div key={g.kind} className="goal">
+          {GOAL_LABELS[g.kind] ?? g.kind}
+          <div className="bar"><div className="bar-fill" style={{ width: `${g.progress * 100}%` }} /></div>
+        </div>
+      ))}
+
+      {citizen.planoAtual.length > 0 && (
+        <>
+          <h3>Plano atual (GOAP)</h3>
+          <div className="muted">{citizen.planoAtual.join(' → ')}</div>
+        </>
+      )}
+
+      <h3>Árvore familiar</h3>
+      <div className="family">
+        {citizen.pais.length > 0 && (
+          <div>Pais: {citizen.pais.map((f) => (
+            <button key={f.id} className="link" onClick={() => select(f.id)}>{f.nome}</button>
+          ))}</div>
+        )}
+        {citizen.conjuge && (
+          <div>Cônjuge: <button className="link" onClick={() => select(citizen.conjuge!.id)}>{citizen.conjuge.nome}</button></div>
+        )}
+        {citizen.filhos.length > 0 && (
+          <div>Filhos: {citizen.filhos.map((f) => (
+            <button key={f.id} className="link" onClick={() => select(f.id)}>{f.nome}</button>
+          ))}</div>
+        )}
+        {citizen.pais.length === 0 && !citizen.conjuge && citizen.filhos.length === 0 && (
+          <div className="muted">Sem família registrada</div>
+        )}
+      </div>
+
+      <h3>Amigos</h3>
+      {citizen.amigos.length === 0 && <div className="muted">Nenhum amigo próximo</div>}
+      {citizen.amigos.map((a) => (
+        <div key={a.id}>
+          <button className="link" onClick={() => select(a.id)}>{a.nome}</button>
+          <span className="muted"> (afinidade {a.forca})</span>
+        </div>
+      ))}
+
+      <h3>Histórico de vida (memória)</h3>
+      <ul className="memories">
+        {citizen.memorias.length === 0 && <li className="muted">Nada marcante ainda…</li>}
+        {citizen.memorias.map((m, i) => (
+          <li key={i}>{m.text}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}

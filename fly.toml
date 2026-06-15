@@ -1,0 +1,25 @@
+# Genesis City — Fly.io (servidor 24/7 sempre-ligado)
+# Suba com:  fly launch --no-deploy   (cria o app)  e depois  fly deploy
+app = "genesis-city"
+primary_region = "gru"            # São Paulo (troque se quiser)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  GENESIS_POP = "10000"
+  AUTOSAVE_MIN = "5"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false       # NÃO dormir — a cidade roda 24/7
+  auto_start_machines = true
+  min_machines_running = 1         # mantém 1 máquina sempre viva
+
+# A simulação guarda o mundo em memória; mantenha 1 instância (não escale > 1),
+# senão cada máquina teria a sua própria cidade.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"                   # 10k habitantes cabem folgado; 100k pede mais

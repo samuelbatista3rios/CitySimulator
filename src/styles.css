@@ -1,0 +1,379 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root, .app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #0b0e14;
+  color: #e8e8ec;
+}
+
+.panel {
+  position: absolute;
+  background: rgba(15, 18, 28, 0.88);
+  border: 1px solid rgba(120, 140, 200, 0.25);
+  border-radius: 10px;
+  padding: 14px;
+  backdrop-filter: blur(6px);
+  font-size: 13px;
+  z-index: 10;
+}
+
+/* Dashboard de estatísticas */
+.dashboard {
+  top: 12px;
+  left: 12px;
+  width: 250px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+.dashboard h2 { font-size: 16px; margin-bottom: 4px; }
+.dashboard .clock { color: #9aa6c4; margin-bottom: 8px; font-size: 12px; }
+.dashboard .tps { color: #5e6a88; }
+.dashboard table { width: 100%; border-collapse: collapse; }
+.dashboard td { padding: 3px 0; border-bottom: 1px solid rgba(120, 140, 200, 0.1); }
+.dashboard td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.dashboard .good { color: #6fdc8c; }
+.dashboard .bad { color: #ff7b7b; }
+.event-banner {
+  background: rgba(255, 180, 60, 0.15);
+  border: 1px solid rgba(255, 180, 60, 0.4);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+/* Controles de tempo */
+.time-controls {
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+.time-controls button {
+  background: #1d2333;
+  color: #e8e8ec;
+  border: 1px solid rgba(120, 140, 200, 0.3);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.time-controls button:hover { background: #2a3147; }
+.time-controls button.active { background: #3b4a78; border-color: #6f86c9; }
+.save-msg { color: #9aa6c4; font-size: 11px; max-width: 180px; }
+
+/* Painel do cidadão */
+.citizen-panel {
+  top: 12px;
+  right: 12px;
+  width: 320px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+.citizen-panel h2 { font-size: 16px; margin-bottom: 2px; padding-right: 24px; }
+.citizen-panel h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8d9bc0;
+  margin: 12px 0 6px;
+}
+.citizen-panel .subtitle { color: #9aa6c4; font-size: 12px; margin-bottom: 2px; }
+.citizen-panel .close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: #9aa6c4;
+  cursor: pointer;
+  font-size: 14px;
+}
+.bar-row { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+.bar-row > span:first-child { width: 90px; font-size: 11px; color: #b8c0d8; }
+.bar { flex: 1; height: 7px; background: #1d2333; border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; background: linear-gradient(90deg, #4a6cd4, #6fdc8c); border-radius: 4px; }
+.bar-val { width: 26px; text-align: right; font-size: 11px; color: #9aa6c4; }
+.goal { margin: 4px 0; font-size: 12px; }
+.muted { color: #5e6a88; font-size: 12px; }
+.link {
+  background: none;
+  border: none;
+  color: #7ea0e8;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px 0 0;
+  text-decoration: underline;
+}
+.memories { list-style: none; }
+.memories li {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(120, 140, 200, 0.08);
+  font-size: 12px;
+  color: #c4cbe0;
+}
+.family > div { margin: 3px 0; font-size: 12px; }
+
+/* Feed de eventos */
+.event-feed {
+  bottom: 64px;
+  left: 12px;
+  width: 320px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.event-feed h3 { font-size: 12px; color: #8d9bc0; margin-bottom: 6px; }
+.event-feed ul { list-style: none; }
+.event-feed li { padding: 2px 0; font-size: 12px; color: #c4cbe0; }
+.event-feed li.global-event { color: #ffd27b; }
+
+/* Painel de empresas */
+.companies-panel {
+  bottom: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 540px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.companies-panel table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.companies-panel th { text-align: left; color: #8d9bc0; padding: 3px 6px; }
+.companies-panel td { padding: 3px 6px; border-top: 1px solid rgba(120, 140, 200, 0.1); }
+
+.hint {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  color: #5e6a88;
+  font-size: 11px;
+  z-index: 5;
+}
+
+.fps-stats { left: auto !important; right: 350px !important; top: 12px !important; }
+
+/* ============================ MODO CELULAR ============================ */
+.mobile-topbar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 20;
+  background: rgba(15, 18, 28, 0.93);
+  border-bottom: 1px solid rgba(120, 140, 200, 0.2);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  backdrop-filter: blur(6px);
+}
+.mtb-clock { font-size: 13px; font-weight: 600; }
+.mtb-metrics { display: flex; gap: 16px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mtb-metrics .good { color: #6fdc8c; }
+.mtb-metrics .bad { color: #ff7b7b; }
+.mtb-event { font-size: 11px; color: #ffd27b; }
+
+.mobile-tabbar {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  z-index: 50;
+  display: flex;
+  background: rgba(12, 15, 22, 0.97);
+  border-top: 1px solid rgba(120, 140, 200, 0.25);
+}
+.mobile-tabbar button {
+  flex: 1;
+  background: none;
+  border: none;
+  color: #9aa6c4;
+  padding: 8px 0 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.mobile-tabbar button.active { color: #7ea0e8; }
+.mt-icon { font-size: 19px; }
+
+/* Toque: gestos vão para o mapa, não rolam a página */
+.app.mobile { touch-action: none; }
+.app.mobile canvas { touch-action: none !important; }
+.app.mobile .fps-stats { display: none; }
+
+/* Controles de tempo: faixa rolável acima da barra de abas */
+.app.mobile .time-controls {
+  bottom: 56px; left: 0; right: 0;
+  width: 100%;
+  transform: none;
+  justify-content: flex-start;
+  overflow-x: auto;
+  border-radius: 0;
+  border-left: none; border-right: none;
+  padding: 7px 8px;
+  gap: 6px;
+}
+.app.mobile .time-controls button { flex: 0 0 auto; }
+.app.mobile .save-msg { display: none; }
+
+/* Painéis viram bottom-sheets (um por vez, via abas) */
+.app.mobile .dashboard,
+.app.mobile .laws-panel,
+.app.mobile .companies-panel,
+.app.mobile .search-box {
+  top: auto; bottom: 102px; left: 0; right: 0;
+  width: 100%;
+  max-width: none;
+  max-height: 56vh;
+  transform: none;
+  border-radius: 14px 14px 0 0;
+  border-bottom: none;
+}
+.app.mobile .search-box { bottom: auto; top: 64px; max-height: 60vh; }
+.app.mobile .companies-panel table { font-size: 13px; }
+
+/* Ficha do cidadão: bottom-sheet de tela cheia */
+.app.mobile .citizen-panel {
+  top: auto; bottom: 0; left: 0; right: 0;
+  width: 100%;
+  max-width: none;
+  max-height: 82vh;
+  border-radius: 16px 16px 0 0;
+  z-index: 60;
+  padding-bottom: 24px;
+}
+.app.mobile .citizen-panel .close { font-size: 20px; padding: 6px; }
+
+/* Alvos de toque maiores no celular */
+.app.mobile .link { padding: 4px 6px 4px 0; display: inline-block; }
+.app.mobile .follow-btn { padding: 12px; }
+
+/* Seções do dashboard */
+.dash-section {
+  font-size: 12px;
+  color: #8d9bc0;
+  margin: 12px 0 4px;
+  border-top: 1px solid rgba(120, 140, 200, 0.15);
+  padding-top: 8px;
+}
+
+/* Busca por nome */
+.search-box {
+  top: 12px;
+  left: 274px;
+  width: 260px;
+  padding: 8px;
+}
+.search-box input {
+  width: 100%;
+  background: #1d2333;
+  border: 1px solid rgba(120, 140, 200, 0.3);
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: #e8e8ec;
+  font-size: 13px;
+  outline: none;
+}
+.search-box input:focus { border-color: #6f86c9; }
+.search-results {
+  list-style: none;
+  margin-top: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.search-results li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.search-results li:hover { background: #2a3147; }
+
+/* Badges e botão seguir no painel do cidadão */
+.badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.badge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.badge.gov { background: rgba(120, 170, 255, 0.2); color: #9fc6ff; border: 1px solid #6f86c9; }
+.badge.jail { background: rgba(255, 110, 110, 0.2); color: #ff9a9a; }
+.badge.crime { background: rgba(255, 170, 70, 0.18); color: #ffc474; }
+.badge.debt { background: rgba(255, 110, 110, 0.15); color: #ff9a9a; }
+.follow-btn {
+  width: 100%;
+  margin: 8px 0 4px;
+  background: #1d2333;
+  color: #e8e8ec;
+  border: 1px solid rgba(120, 140, 200, 0.3);
+  border-radius: 6px;
+  padding: 7px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.follow-btn:hover { background: #2a3147; }
+.follow-btn.on { background: #3b4a78; border-color: #6f86c9; }
+.loan {
+  font-size: 11px;
+  color: #c4cbe0;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(120, 140, 200, 0.08);
+}
+
+/* Painel de Leis */
+.laws-panel {
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 360px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+}
+.laws-panel h2 { font-size: 16px; margin-bottom: 8px; padding-right: 24px; }
+.laws-panel h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8d9bc0;
+  margin: 12px 0 6px;
+}
+.law-gov { display: flex; align-items: center; gap: 10px; }
+.law-platform {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border: 1px solid;
+  border-radius: 12px;
+}
+.law-mayor { font-size: 12px; color: #c4cbe0; }
+.law-desc { font-size: 12px; color: #9aa6c4; margin: 8px 0; }
+.law-table { width: 100%; border-collapse: collapse; }
+.law-table td { padding: 5px 0; border-bottom: 1px solid rgba(120, 140, 200, 0.12); font-size: 13px; }
+.law-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.law-effects { list-style: none; }
+.law-effects li { font-size: 12px; color: #c4cbe0; padding: 3px 0; }
+
+/* Legenda de locais de lazer */
+.venue-legend {
+  bottom: 64px;
+  right: 12px;
+  width: 150px;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+.venue-legend .vl-title { color: #8d9bc0; margin-bottom: 5px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.venue-legend .vl-row { display: flex; align-items: center; gap: 6px; padding: 1px 0; color: #c4cbe0; }
+.venue-legend .vl-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+/* Marcadores de instituições no mapa */
+.inst-marker {
+  font-size: 22px;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.6));
+  user-select: none;
+  pointer-events: none;
+}
