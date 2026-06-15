@@ -1,4 +1,5 @@
 import pg from 'pg';
+import 'dotenv/config';
 
 /**
  * Pool PostgreSQL. Configure via variáveis de ambiente:
@@ -22,6 +23,9 @@ export const pool = url
       database: process.env.PGDATABASE ?? 'genesis_city',
       max: 10,
     });
+
+    console.log('DATABASE_URL:', process.env.DATABASE_URL);
+console.log('PGDATABASE:', process.env.PGDATABASE);
 
 export async function ping(): Promise<boolean> {
   try {
