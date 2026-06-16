@@ -6,6 +6,7 @@ import type { FeedItem, InstitutionMarker } from '../types';
 import { remember } from '../agents/memory';
 import type { Government } from '../government/government';
 import type { CareerSystem } from '../economy/careers';
+import type { EconomySystem } from '../economy/economy';
 
 const DAYS_PER_YEAR = CONFIG.DAYS_PER_MONTH * CONFIG.MONTHS_PER_YEAR;
 
@@ -41,6 +42,7 @@ export class InstitutionSystem {
     private world: EcsWorld,
     private city: CityMap,
     private careers: CareerSystem,
+    private economy: EconomySystem,
     private rng: RNG,
     private feed: (item: FeedItem) => void,
   ) {
@@ -164,18 +166,25 @@ export class InstitutionSystem {
       const age = hot.ageDays[i] / DAYS_PER_YEAR;
       if (age < CONFIG.ADULT_AGE) continue;
 
-      const broke = hot.money[i] < 400 ? 1 : hot.money[i] < 1500 ? 0.5 : 0;
-      const jobless = hot.companyId[i] === -1 && !hot.isOwner[i] ? 1 : 0;
-      const unhappy = hot.happiness[i] < 30 ? 1 : 0;
+      // Limiares de pobreza/riqueza acompanham a INFLAÇÃO (priceLevel) — senão,
+      // após décadas, valores nominais fixos (R$400, R$50 mil) deixam de fazer
+      // sentido e a calibração quebra (crime ia a 100 até em pleno boom).
+      const pl = this.economy.priceLevel;
+      const broke = hot.money[i] < 500 * pl ? 1 : hot.money[i] < 2000 * pl ? 0.5 : 0;
+      const jobless = hot.companyId[i] === -1 && !hot.isOwner[i] && !hot.publicJob[i] ? 1 : 0;
+      const unhappy = hot.happiness[i] < 22 ? 1 : 0; // só desespero, não tristeza leve
       const meanness = (100 - c.personality.amabilidade) / 100;
-      const rich = hot.money[i] > 50_000 ? 1 : 0;
-      const factor = broke * 0.4 + jobless * 0.2 + unhappy * 0.2 + meanness * 0.2;
-      let propensity = Math.max(0, factor - 0.28) * 0.03;
+      const rich = hot.money[i] > 50_000 * pl ? 1 : 0;
+      // a POBREZA REAL é o motor; infelicidade leve pesa pouco
+      const factor = broke * 0.5 + jobless * 0.25 + unhappy * 0.1 + meanness * 0.15;
+      let propensity = Math.max(0, factor - 0.34) * 0.025;
       // tentação de colarinho branco: rico, pouco escrupuloso, com caixa público gordo
       const fraudUrge = rich && meanness > 0.55 && gov.budget > 0 ? 0.015 * meanness : 0;
       propensity += fraudUrge;
       propensity *= inequalityMult;
       propensity *= 1 + Math.min(4, hot.criminalRecord[i]) * 0.25; // reincidência
+      // teto: impede que desigualdade × reincidência se acumulem e estourem
+      propensity = Math.min(propensity, 0.06);
       if (!this.rng.chance(propensity)) continue;
 
       // escolhe o TIPO de crime conforme o perfil
@@ -212,7 +221,7 @@ export class InstitutionSystem {
     const c = cold[id]!;
     if (kind === 'fraude') {
       // colarinho branco: desvia do caixa público (corrupção)
-      const loot = Math.min(gov.budget * 0.02, 5000 + hot.money[id] * 0.05);
+      const loot = Math.min(gov.budget * 0.02, 5000 * this.economy.priceLevel + hot.money[id] * 0.05);
       if (loot > 0) { gov.budget -= loot; hot.money[id] += loot; }
       remember(c, tick, 'conflito', 'Cometeu fraude contra o erário');
       if (this.rng.chance(0.05)) this.feed({ tick, kind: 'social', text: `💼 Esquema de corrupção desviou recursos públicos` });
@@ -229,9 +238,9 @@ export class InstitutionSystem {
     }
     // furto / roubo: contra uma vítima
     const victim = this.rng.int(0, range - 1);
-    if (hot.alive[victim] && victim !== id && hot.money[victim] > 100) {
+    if (hot.alive[victim] && victim !== id && hot.money[victim] > 100 * this.economy.priceLevel) {
       const violent = kind === 'roubo';
-      const loot = Math.min(hot.money[victim] * (violent ? 0.5 : 0.3), violent ? 8000 : 4000);
+      const loot = Math.min(hot.money[victim] * (violent ? 0.5 : 0.3), (violent ? 8000 : 4000) * this.economy.priceLevel);
       hot.money[victim] -= loot;
       hot.money[id] += loot;
       hot.safety[victim] = Math.max(0, hot.safety[victim] - (violent ? 30 : 20));
@@ -280,7 +289,9 @@ export class InstitutionSystem {
         // ressocialização: auxílio-reinserção + reemprego imediato quebram o
         // ciclo pobreza→crime→prisão→pobreza que causava reincidência em massa.
         hot.happiness[i] = Math.min(100, hot.happiness[i] + 12);
-        hot.money[i] = Math.max(hot.money[i], 800); // auxílio mínimo
+        // auxílio-reinserção acompanha a inflação (senão vira pó após décadas e a
+        // pessoa sai da prisão já "quebrada", reincidindo na hora)
+        hot.money[i] = Math.max(hot.money[i], 1200 * this.economy.priceLevel);
         this.careers.tryGetJob(i, tick); // programa de reinserção no trabalho
       }
     }

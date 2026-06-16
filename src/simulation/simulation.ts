@@ -96,7 +96,7 @@ export class Simulation {
     this.housing = new HousingMarket(this.world, this.city);
     this.economy.rentFactor = (homeId) => this.housing.rentFactor(homeId);
     this.government = new Government(this.world, this.rng, feed);
-    this.institutions = new InstitutionSystem(this.world, this.city, this.careers, this.rng, feed);
+    this.institutions = new InstitutionSystem(this.world, this.city, this.careers, this.economy, this.rng, feed);
     this.relationships = new RelationshipSystem(this.world, this.rng, feed);
     this.lifecycle = new LifecycleSystem(this.world, this.city, this.careers, this.rng, feed);
     this.events = new GlobalEventSystem(this.rng, this.economy, this.lifecycle, feed);
@@ -724,11 +724,13 @@ export class Simulation {
     const bankStats = this.bank.stats();
     const unemployment = adults > 0 ? ((adults - employed) / adults) * 100 : 0;
     const avgHappiness = pop > 0 ? happiness / pop : 0;
-    // criminalidade: agora ancorada em CRIMES REAIS (por mil hab./ano) + pressão social
+    // criminalidade: ancorada em crimes reais (por mil hab./ano), com escala
+    // calibrada para que 100 = colapso real (e não furto miúdo cotidiano).
+    // ~25 crimes/mil/ano (cidade tranquila) → ~15; ~120/mil (caos) → ~100.
     const crimeRate = pop > 0 ? (this.institutions.crimesThisYear / pop) * 1000 : 0;
     const crime = Math.min(
       100,
-      crimeRate * 1.2 + unemployment * 0.8 + Math.max(0, 45 - avgHappiness) * 0.8,
+      crimeRate * 0.55 + unemployment * 0.6 + Math.max(0, 35 - avgHappiness) * 0.4,
     );
 
     const t = this.tick;
