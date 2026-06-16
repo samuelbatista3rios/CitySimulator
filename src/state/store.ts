@@ -5,11 +5,38 @@ import type {
   CitizenDetail,
   CitizenSearchResult,
   CompanyView,
+  CompanySort,
   FeedItem,
+  MonitorData,
+  HeatmapData,
   WorkerIn,
   WorkerOut,
 } from '../simulation/types';
 import { saveSnapshot, loadSnapshot } from '../database/saveSystem';
+
+/** Ponto histórico para os gráficos de tendência. */
+export interface HistoryPoint {
+  ano: number; mes: number;
+  pib: number; desemprego: number; inflacao: number; populacao: number;
+  aprovacao: number; divida: number; imob: number; felicidade: number;
+}
+export interface Alert { id: string; text: string; level: 'warn' | 'bad' }
+export type HeatmapMetric = 'none' | 'wealth' | 'happiness' | 'crime' | 'land';
+
+const HISTORY_CAP = 360;
+
+/** Deriva alertas automáticos do estado atual da cidade. */
+function deriveAlerts(s: CityStats): Alert[] {
+  const out: Alert[] = [];
+  if (s.desemprego > 18) out.push({ id: 'desemp', text: `Desemprego alto: ${s.desemprego.toFixed(0)}%`, level: 'bad' });
+  if (s.inflacao > 1.5) out.push({ id: 'infl', text: `Inflação alta: ${s.inflacao.toFixed(1)}%/mês`, level: 'bad' });
+  if (s.criminalidade > 50) out.push({ id: 'crime', text: `Criminalidade elevada: ${s.criminalidade.toFixed(0)}`, level: 'bad' });
+  if (s.prefeito && s.aprovacao < 25) out.push({ id: 'recall', text: `Aprovação crítica: ${s.aprovacao.toFixed(0)}% (risco de recall)`, level: 'bad' });
+  if (s.austeridade) out.push({ id: 'auster', text: 'Austeridade fiscal (cortes de gasto)', level: 'warn' });
+  if (s.eventoAtivo && /crise|pandemia/i.test(s.eventoAtivo)) out.push({ id: 'evt', text: s.eventoAtivo, level: 'warn' });
+  if (s.inadimplencia > 30) out.push({ id: 'inad', text: `Inadimplência alta: ${s.inadimplencia.toFixed(0)}%`, level: 'warn' });
+  return out;
+}
 
 export interface FrameData {
   positions: Float32Array;
@@ -31,12 +58,20 @@ interface GenesisState {
   selectedCitizen: CitizenDetail | null;
   companies: CompanyView[];
   showCompanies: boolean;
+  companySort: CompanySort;
   showLaws: boolean;
   paused: boolean;
   speed: number;
   saving: boolean;
   saveMessage: string | null;
   searchResults: CitizenSearchResult[];
+  // Monitoramento
+  history: HistoryPoint[];
+  alerts: Alert[];
+  monitor: MonitorData | null;
+  showMonitor: boolean;
+  heatmap: HeatmapData | null;
+  heatmapMetric: HeatmapMetric;
   /** id do cidadão que a câmera está seguindo (lido pelo render loop) */
   followId: number | null;
   /** painel ativo no modo celular (abas inferiores); null = só o mapa */
@@ -52,7 +87,13 @@ interface GenesisState {
   save: () => void;
   load: () => Promise<void>;
   toggleCompanies: () => void;
+  refreshCompanies: () => void;
+  setCompanySort: (s: CompanySort) => void;
   toggleLaws: () => void;
+  toggleMonitor: () => void;
+  refreshMonitor: () => void;
+  setHeatmapMetric: (m: HeatmapMetric) => void;
+  refreshHeatmap: () => void;
   search: (query: string) => void;
   clearSearch: () => void;
   follow: (id: number) => void;
@@ -83,12 +124,19 @@ export const useGenesis = create<GenesisState>((set, get) => ({
   selectedCitizen: null,
   companies: [],
   showCompanies: false,
+  companySort: 'capital',
   showLaws: false,
   paused: false,
   speed: 24,
   saving: false,
   saveMessage: null,
   searchResults: [],
+  history: [],
+  alerts: [],
+  monitor: null,
+  showMonitor: false,
+  heatmap: null,
+  heatmapMetric: 'none',
   followId: null,
   mobilePanel: null,
 
@@ -106,7 +154,21 @@ export const useGenesis = create<GenesisState>((set, get) => ({
     const handle = (msg: WorkerOut) => {
       switch (msg.type) {
         case 'ready': set({ layout: msg.layout }); break;
-        case 'stats': set({ stats: msg.stats }); break;
+        case 'stats':
+          set((s) => {
+            const st = msg.stats;
+            const point: HistoryPoint = {
+              ano: st.year, mes: st.month, pib: st.pib, desemprego: st.desemprego,
+              inflacao: st.inflacao, populacao: st.populacao, aprovacao: st.aprovacao,
+              divida: st.dividaPublica, imob: st.indiceImobiliario, felicidade: st.felicidadeMedia,
+            };
+            const history = [...s.history, point];
+            if (history.length > HISTORY_CAP) history.splice(0, history.length - HISTORY_CAP);
+            return { stats: st, history, alerts: deriveAlerts(st) };
+          });
+          break;
+        case 'monitor': set({ monitor: msg.data }); break;
+        case 'heatmap': set({ heatmap: msg.data }); break;
         case 'frame':
           get().frameRef.current = {
             positions: msg.positions, ids: msg.ids, activities: msg.activities,
@@ -190,11 +252,30 @@ export const useGenesis = create<GenesisState>((set, get) => ({
 
   toggleCompanies: () => {
     const show = !get().showCompanies;
-    if (show) get().send({ type: 'getCompanies' });
+    if (show) get().send({ type: 'getCompanies', sort: get().companySort });
     set({ showCompanies: show });
+  },
+  refreshCompanies: () => get().send({ type: 'getCompanies', sort: get().companySort }),
+  setCompanySort: (s) => {
+    set({ companySort: s });
+    get().send({ type: 'getCompanies', sort: s });
   },
 
   toggleLaws: () => set((s) => ({ showLaws: !s.showLaws })),
+
+  toggleMonitor: () => {
+    const show = !get().showMonitor;
+    if (show) get().send({ type: 'getMonitor' });
+    set({ showMonitor: show });
+  },
+  refreshMonitor: () => get().send({ type: 'getMonitor' }),
+  setHeatmapMetric: (m) => {
+    set({ heatmapMetric: m });
+    if (m !== 'none') get().send({ type: 'getHeatmap' });
+  },
+  refreshHeatmap: () => {
+    if (get().heatmapMetric !== 'none') get().send({ type: 'getHeatmap' });
+  },
 
   search: (query) => {
     if (query.trim().length < 2) {
@@ -210,7 +291,7 @@ export const useGenesis = create<GenesisState>((set, get) => ({
   // Abas do celular: abre um painel por vez e sincroniza os toggles existentes.
   openMobilePanel: (p) => {
     const next = get().mobilePanel === p ? null : p;
-    if (next === 'empresas') get().send({ type: 'getCompanies' });
+    if (next === 'empresas') get().send({ type: 'getCompanies', sort: get().companySort });
     set({
       mobilePanel: next,
       showLaws: next === 'laws',

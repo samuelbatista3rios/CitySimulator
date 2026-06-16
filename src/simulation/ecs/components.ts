@@ -71,6 +71,7 @@ export class HotComponents {
   isMayor: Uint8Array; // prefeito eleito
   unpaidMonths: Uint8Array; // meses de contas atrasadas (inadimplência)
   publicJob: Uint8Array; // empregado no setor público (programa de empregos)
+  criminalRecord: Uint8Array; // nº de condenações (ficha criminal → reincidência)
 
   constructor(capacity: number = CONFIG.MAX_CITIZENS) {
     this.capacity = capacity;
@@ -110,6 +111,7 @@ export class HotComponents {
     this.isMayor = new Uint8Array(capacity);
     this.unpaidMonths = new Uint8Array(capacity);
     this.publicJob = new Uint8Array(capacity);
+    this.criminalRecord = new Uint8Array(capacity);
   }
 }
 

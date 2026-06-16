@@ -7,6 +7,9 @@ import { EventFeed } from './ui/EventFeed';
 import { SearchBox } from './ui/SearchBox';
 import { LawsPanel } from './ui/LawsPanel';
 import { VenueLegend } from './ui/VenueLegend';
+import { MonitorPanel } from './ui/MonitorPanel';
+import { HeatmapControls } from './ui/HeatmapControls';
+import { Alerts } from './ui/Alerts';
 import { MobileTabBar } from './ui/MobileTabBar';
 import { MobileTopBar } from './ui/MobileTopBar';
 import { useIsMobile } from './ui/useIsMobile';
@@ -33,6 +36,7 @@ export default function App() {
           <EventFeed />
           <LawsPanel />
           <VenueLegend />
+          <HeatmapControls />
           <div className="hint">
             Arraste para mover · Scroll para zoom · Clique em um habitante para ver sua vida
           </div>
@@ -50,6 +54,10 @@ export default function App() {
           <MobileTabBar />
         </>
       )}
+
+      {/* Monitoramento e alertas: disponíveis em desktop e celular */}
+      <MonitorPanel />
+      <Alerts />
 
       {/* Ficha do cidadão: bottom-sheet no celular, painel lateral no desktop */}
       <CitizenPanel />

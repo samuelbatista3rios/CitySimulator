@@ -14,7 +14,7 @@ const HOT_FIELDS = [
   'targetX', 'targetZ', 'activity', 'activityUntil', 'nextThink', 'homeId',
   'companyId', 'jobLevel', 'partnerId', 'ownsHouse', 'ownsCar', 'isOwner', 'building',
   'creditScore', 'inJail', 'jailUntil', 'isMayor', 'unpaidMonths', 'publicJob',
-  'fulfillment', 'fame',
+  'fulfillment', 'fame', 'criminalRecord',
 ] as const;
 
 interface SavedCold extends Omit<ColdData, 'relationships'> {
@@ -25,7 +25,10 @@ export function serialize(sim: Simulation, seed: number): string {
   const hot: Record<string, number[]> = {};
   const range = sim.world.entityRange;
   for (const f of HOT_FIELDS) {
-    hot[f] = Array.from((sim.world.hot as any)[f].subarray(0, range));
+    const src = (sim.world.hot as any)[f].subarray(0, range);
+    // dinheiro é Float64 e pode acumular muitas casas decimais — arredondar reduz
+    // drasticamente o tamanho da string JSON (ex.: "1234.5000000003" → "1235").
+    hot[f] = f === 'money' ? Array.from(src, (v: number) => Math.round(v)) : Array.from(src);
   }
   const cold: (SavedCold | null)[] = sim.world.cold.slice(0, range).map((c) =>
     c ? { ...c, relationships: [...c.relationships.entries()] } : null,
@@ -59,6 +62,7 @@ export function serialize(sim: Simulation, seed: number): string {
     },
     bank: sim.bank.dump(),
     government: sim.government.dump(),
+    housing: sim.housing.dump(),
   });
 }
 
@@ -92,7 +96,17 @@ export function deserialize(payload: string): Simulation {
   // empresas
   sim.companies.length = 0;
   for (const c of data.companies) {
-    sim.companies.push({ ...c, employees: new Set(c.employees) });
+    sim.companies.push({
+      dividendsThisMonth: 0,
+      lastProductivity: 1,
+      price: 1,
+      priceTrend: 1,
+      lastProfit: 0,
+      rnd: 0,
+      techLevel: 1,
+      ...c,
+      employees: new Set(c.employees),
+    });
   }
   sim.careers.rebuildHiringIndex();
 
@@ -108,5 +122,6 @@ export function deserialize(payload: string): Simulation {
   Object.assign(sim.economy, data.economy);
   if (data.bank) sim.bank.restore(data.bank);
   if (data.government) sim.government.restore(data.government);
+  if (data.housing) sim.housing.restore(data.housing);
   return sim;
 }

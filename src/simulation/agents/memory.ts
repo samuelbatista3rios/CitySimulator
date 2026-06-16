@@ -1,7 +1,7 @@
 import type { ColdData } from '../ecs/components';
 import type { MemoryEvent, MemoryKind } from '../types';
 
-const MAX_MEMORIES = 60;
+const MAX_MEMORIES = 40;
 
 /**
  * Memória episódica: eventos marcantes da vida do cidadão.

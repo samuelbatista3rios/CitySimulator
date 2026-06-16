@@ -116,7 +116,9 @@ wss.on('connection', (ws) => {
       case 'pause': paused = true; break;
       case 'resume': paused = false; break;
       case 'getCitizen': sendJSON(ws, { type: 'citizen', detail: sim.citizenDetail(msg.id) }); break;
-      case 'getCompanies': sendJSON(ws, { type: 'companies', companies: sim.companyViews() }); break;
+      case 'getCompanies': sendJSON(ws, { type: 'companies', companies: sim.companyViews(msg.sort) }); break;
+      case 'getMonitor': sendJSON(ws, { type: 'monitor', data: sim.monitorData() }); break;
+      case 'getHeatmap': sendJSON(ws, { type: 'heatmap', data: sim.heatmapData() }); break;
       case 'search': sendJSON(ws, { type: 'searchResults', results: sim.searchByName(msg.query) }); break;
       case 'save':
         persistSnapshot(serialize(sim, seed))

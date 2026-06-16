@@ -17,6 +17,9 @@ export function Dashboard() {
     ['Empregos públicos', fmt(stats.empregosPublicos)],
     ['Empresas ativas', fmt(stats.empresas)],
     ['Falências', fmt(stats.empresasFalidas)],
+    ['Consumo famílias', fmtMoney(stats.consumoFamilias)],
+    ['Dividendos (mês)', fmtMoney(stats.dividendos)],
+    ['Investimento P&D', fmtMoney(stats.investimentoPED)],
     ['Inflação', `${stats.inflacao.toFixed(2)}% a.m.`, stats.inflacao > 1.5 ? 'bad' : undefined],
     ['Salário médio', fmtMoney(stats.salarioMedio)],
     ['Criminalidade', stats.criminalidade.toFixed(0), stats.criminalidade > 40 ? 'bad' : 'good'],
@@ -26,14 +29,22 @@ export function Dashboard() {
     ['Saúde média', stats.saudeMedia.toFixed(0)],
     ['Nascimentos (ano)', fmt(stats.nascimentosAno)],
     ['Mortes (ano)', fmt(stats.mortesAno)],
+    ['Expectativa de vida', `${stats.expectativaVida.toFixed(0)} anos`],
   ];
 
   const govRows: [string, string, string?][] = [
     ['Prefeito(a)', stats.prefeito ?? '— (sem eleição)'],
     ['Plataforma', stats.plataforma ?? '—'],
-    ['Imposto', `${stats.imposto.toFixed(0)}%`],
+    ['Aprovação', stats.prefeito ? `${stats.aprovacao.toFixed(0)}%` : '—',
+      !stats.prefeito ? undefined : stats.aprovacao >= 50 ? 'good' : stats.aprovacao < 30 ? 'bad' : undefined],
+    ['IR (topo)', `${stats.imposto.toFixed(0)}%`],
+    ['Imp. corporativo', `${stats.impostoCorporativo.toFixed(0)}%`],
+    ['IPTU', `${stats.impostoPropriedade.toFixed(2)}%/mês`],
     ['Salário mínimo', fmtMoney(stats.salarioMinimo)],
     ['Orçamento público', fmtMoney(stats.orcamentoPublico)],
+    ['Dívida pública', fmtMoney(stats.dividaPublica), stats.dividaPublica > 0 ? 'bad' : 'good'],
+    ['Juros da dívida (mês)', fmtMoney(stats.jurosDivida)],
+    ['Austeridade', stats.austeridade ? 'Sim (cortes)' : 'Não', stats.austeridade ? 'bad' : undefined],
     ['Próxima eleição', `${stats.proximaEleicaoAnos.toFixed(1)} anos`],
   ];
   const instRows: [string, string, string?][] = [
@@ -46,6 +57,9 @@ export function Dashboard() {
     ['Religiosos', `${stats.religiosos.toFixed(0)}%`],
     ['Inadimplência', `${stats.inadimplencia.toFixed(1)}%`, stats.inadimplencia > 25 ? 'bad' : undefined],
     ['Score de crédito', stats.scoreCreditoMedio.toFixed(0)],
+    ['Índice imobiliário', `${(stats.indiceImobiliario * 100).toFixed(0)}`],
+    ['Preço médio imóvel', fmtMoney(stats.precoMedioImovel)],
+    ['Casa própria', `${stats.taxaProprietarios.toFixed(0)}%`],
   ];
 
   return (

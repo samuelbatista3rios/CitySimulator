@@ -118,7 +118,13 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
       if (sim) post({ type: 'citizen', detail: sim.citizenDetail(msg.id) });
       break;
     case 'getCompanies':
-      if (sim) post({ type: 'companies', companies: sim.companyViews() });
+      if (sim) post({ type: 'companies', companies: sim.companyViews(msg.sort) });
+      break;
+    case 'getMonitor':
+      if (sim) post({ type: 'monitor', data: sim.monitorData() });
+      break;
+    case 'getHeatmap':
+      if (sim) post({ type: 'heatmap', data: sim.heatmapData() });
       break;
     case 'search':
       if (sim) post({ type: 'searchResults', results: sim.searchByName(msg.query) });

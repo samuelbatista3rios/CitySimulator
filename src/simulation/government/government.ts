@@ -9,7 +9,9 @@ const DAYS_PER_YEAR = CONFIG.DAYS_PER_MONTH * CONFIG.MONTHS_PER_YEAR;
 
 export interface Platform {
   name: string;
-  taxRate: number; // imposto sobre a folha
+  taxRate: number; // nível do imposto de renda progressivo (dirige o topo marginal)
+  corporateTax: number; // alíquota sobre o lucro das empresas
+  propertyTax: number; // IPTU mensal: fração do valor do imóvel
   minimumWage: number; // piso salarial
   socialSpending: number; // 0..1 do orçamento p/ saúde+educação+transferências
   policing: number; // 0..1 do orçamento p/ segurança
@@ -17,13 +19,16 @@ export interface Platform {
   publicJobs: number; // 0..1 — agressividade do programa de empregos públicos
 }
 
+// Cada plataforma tem um MIX TRIBUTÁRIO próprio: progressistas taxam renda alta,
+// lucro e patrimônio; liberais aliviam tudo; "lei e ordem" foca em arrecadar p/
+// segurança. O IPTU é uma fração mensal pequena do valor do imóvel (HOUSE_PRICE).
 const PLATFORMS: Platform[] = [
-  { name: 'Progressista', taxRate: 0.20, minimumWage: CONFIG.BASE_SALARY * 0.95, socialSpending: 0.55, policing: 0.2, businessSubsidy: 0.1, publicJobs: 0.4 },
-  { name: 'Centro',       taxRate: 0.14, minimumWage: CONFIG.BASE_SALARY * 0.75, socialSpending: 0.4, policing: 0.35, businessSubsidy: 0.25, publicJobs: 0.2 },
-  { name: 'Liberal',      taxRate: 0.08, minimumWage: CONFIG.BASE_SALARY * 0.55, socialSpending: 0.2, policing: 0.3, businessSubsidy: 0.5, publicJobs: 0.05 },
-  { name: 'Lei e Ordem',  taxRate: 0.15, minimumWage: CONFIG.BASE_SALARY * 0.7,  socialSpending: 0.2, policing: 0.7, businessSubsidy: 0.2, publicJobs: 0.1 },
+  { name: 'Progressista', taxRate: 0.20, corporateTax: 0.22, propertyTax: 0.0016, minimumWage: CONFIG.BASE_SALARY * 0.95, socialSpending: 0.55, policing: 0.2, businessSubsidy: 0.1, publicJobs: 0.4 },
+  { name: 'Centro',       taxRate: 0.14, corporateTax: 0.15, propertyTax: 0.0010, minimumWage: CONFIG.BASE_SALARY * 0.75, socialSpending: 0.4, policing: 0.35, businessSubsidy: 0.25, publicJobs: 0.2 },
+  { name: 'Liberal',      taxRate: 0.08, corporateTax: 0.08, propertyTax: 0.0005, minimumWage: CONFIG.BASE_SALARY * 0.55, socialSpending: 0.2, policing: 0.3, businessSubsidy: 0.5, publicJobs: 0.05 },
+  { name: 'Lei e Ordem',  taxRate: 0.15, corporateTax: 0.16, propertyTax: 0.0012, minimumWage: CONFIG.BASE_SALARY * 0.7,  socialSpending: 0.2, policing: 0.7, businessSubsidy: 0.2, publicJobs: 0.1 },
   // Partido de RECUPERAÇÃO: surge forte em crises (subsídio + empregos públicos).
-  { name: 'Reconstrução', taxRate: 0.16, minimumWage: CONFIG.BASE_SALARY * 0.7,  socialSpending: 0.25, policing: 0.25, businessSubsidy: 0.6, publicJobs: 0.6 },
+  { name: 'Reconstrução', taxRate: 0.16, corporateTax: 0.14, propertyTax: 0.0010, minimumWage: CONFIG.BASE_SALARY * 0.7,  socialSpending: 0.25, policing: 0.25, businessSubsidy: 0.6, publicJobs: 0.6 },
 ];
 
 /**
@@ -46,6 +51,24 @@ export class Government {
   budget = 0;
   nextElectionTick = TICKS_PER_YEAR * 4;
   lastElectionTick = 0;
+  /** aprovação do prefeito 0..100 — reage aos resultados da gestão (accountability) */
+  approval = 50;
+  /** sinaliza que a última eleição foi um RECALL (queda de aprovação) */
+  recallThisMonth = false;
+
+  // ---- Fiscal: dívida pública, juros e austeridade
+  /** dívida pública acumulada (déficits viram dívida) */
+  debt = 0;
+  /** juros pagos sobre a dívida no mês (serviço da dívida) */
+  debtInterest = 0;
+  /** receita acumulada no mês corrente (impostos que entram no caixa) */
+  private revenueAccum = 0;
+  /** receita do mês anterior — base p/ razão dívida/receita e juros */
+  lastMonthRevenue = 0;
+  /** 1 = sem cortes; < 1 = austeridade (corta gasto discricionário) */
+  austerity = 1;
+  /** taxa de desemprego do último mês (0..1) — lida pela economia */
+  unemploymentRate = 0;
 
   // níveis de financiamento 0..1 derivados do gasto (lidos pelas instituições)
   policeFunding = 0.5;
@@ -66,33 +89,77 @@ export class Government {
   get taxRate(): number {
     return this.policy.taxRate;
   }
+  get corporateTax(): number {
+    return this.policy.corporateTax;
+  }
+  get propertyTax(): number {
+    return this.policy.propertyTax;
+  }
   get minimumWage(): number {
     return this.policy.minimumWage;
   }
 
   collect(taxes: number): void {
     this.budget += taxes;
+    this.revenueAccum += taxes; // contabiliza arrecadação do mês (base fiscal)
   }
 
   /** Roda ANTES da economia: eleições, política econômica e gasto público. */
   monthlyCycle(tick: number, economy: EconomySystem): void {
     this.emergencyThisMonth = false;
+    this.recallThisMonth = false;
     const { employed, adults, unemployedIds } = this.scanLabor();
     const unemploymentRate = adults > 0 ? (adults - employed) / adults : 0;
+    this.unemploymentRate = unemploymentRate;
 
-    // Eleição ordinária (4 anos) OU de emergência (crise grave, mín. 1 ano)
+    // Aprovação do prefeito reage aos resultados (antes de decidir eleição).
+    this.updateApproval(unemploymentRate, economy);
+
+    const enoughTime = tick - this.lastElectionTick >= TICKS_PER_YEAR;
+    // Eleição ordinária (4 anos), de emergência (crise grave) ou RECALL
+    // (aprovação despencou) — as duas últimas exigem ao menos 1 ano de mandato.
     const ordinary = tick >= this.nextElectionTick;
-    const emergency =
-      unemploymentRate > 0.22 && tick - this.lastElectionTick >= TICKS_PER_YEAR;
-    if (ordinary || emergency) {
-      this.holdElection(tick, unemploymentRate, emergency);
+    const emergency = unemploymentRate > 0.22 && enoughTime;
+    const recall = this.mayorId !== -1 && this.approval < 25 && enoughTime;
+    if (ordinary || emergency || recall) {
+      this.holdElection(tick, unemploymentRate, emergency || recall, recall && !ordinary && !emergency);
       this.lastElectionTick = tick;
       this.nextElectionTick = tick + TICKS_PER_YEAR * 4;
-      if (emergency && !ordinary) this.emergencyThisMonth = true;
+      if ((emergency || recall) && !ordinary) this.emergencyThisMonth = true;
     }
 
     this.managePublicSector(economy, unemployedIds);
     this.spendBudget();
+    this.manageDebt();
+  }
+
+  /**
+   * Atualiza a aprovação do prefeito. A população julga a gestão pelo que sente
+   * no dia a dia: felicidade média, desemprego, inflação e saúde fiscal. É um
+   * número suavizado (não pula de mês para mês) que dá ACCOUNTABILITY — prefeito
+   * com boa entrega se reelege; com má entrega cai (e pode sofrer recall).
+   */
+  private updateApproval(unemploymentRate: number, economy: EconomySystem): void {
+    if (this.mayorId === -1) { this.approval = 50; return; }
+    const { hot } = this.world;
+    let hapSum = 0, n = 0;
+    for (let i = 0; i < this.world.entityRange; i++) {
+      if (!hot.alive[i]) continue;
+      const age = hot.ageDays[i] / DAYS_PER_YEAR;
+      if (age < CONFIG.ADULT_AGE) continue;
+      hapSum += hot.happiness[i];
+      n++;
+    }
+    const avgHappiness = n > 0 ? hapSum / n : 50;
+    let target = 50;
+    target += (avgHappiness - 50) * 0.8;          // humor da cidade pesa muito
+    target -= unemploymentRate * 100 * 1.1;        // desemprego corrói a popularidade
+    target -= Math.max(0, economy.inflationMonthly * 100 - 0.5) * 7; // inflação acima da meta
+    target += this.budget > 0 ? 4 : -8;            // caixa no azul/vermelho
+    target -= Math.min(15, this.debtToRevenue * 6); // dívida alta desgasta a gestão
+    target = Math.max(0, Math.min(100, target));
+    this.approval += (target - this.approval) * 0.34; // suavização
+    this.approval = Math.max(0, Math.min(100, this.approval));
   }
 
   private scanLabor(): { employed: number; adults: number; unemployedIds: number[] } {
@@ -111,9 +178,12 @@ export class Government {
   }
 
   /** Eleição: o voto pesa a dor econômica atual (desemprego, bolso). */
-  private holdElection(tick: number, cityUnemp: number, emergency: boolean): void {
+  private holdElection(tick: number, cityUnemp: number, emergency: boolean, recall = false): void {
     const { hot, cold } = this.world;
     const votes = new Array(PLATFORMS.length).fill(0);
+    // INCUMBÊNCIA: a plataforma no poder é premiada/punida pela aprovação atual.
+    const incumbent = this.mayorId !== -1 ? this.policy.name : null;
+    const incumbencyBonus = (this.approval - 50) * 1.6;
 
     for (let i = 0; i < this.world.entityRange; i++) {
       if (!hot.alive[i] || hot.inJail[i]) continue;
@@ -135,6 +205,8 @@ export class Government {
         // DOR ECONÔMICA: desempregados e a cidade em crise valorizam recuperação
         const painWeight = (meUnemployed ? 1 : 0) * 90 + cityUnemp * 220;
         s += (pl.publicJobs + pl.businessSubsidy) * painWeight * 0.5;
+        // voto retrospectivo: recompensa/pune quem está governando
+        if (pl.name === incumbent) s += incumbencyBonus;
         s += this.rng.gaussian() * 10;
         if (s > bestScore) { bestScore = s; bestP = k; }
       }
@@ -146,6 +218,8 @@ export class Government {
     const total = votes.reduce((a, b) => a + b, 0) || 1;
     const pct = Math.round((votes[winner] / total) * 100);
     this.policy = { ...PLATFORMS[winner] };
+    this.recallThisMonth = recall;
+    this.approval = 55; // novo mandato começa com leve "lua de mel"
 
     if (this.mayorId !== -1 && hot.alive[this.mayorId]) hot.isMayor[this.mayorId] = 0;
     this.mayorId = this.pickMayor();
@@ -157,7 +231,9 @@ export class Government {
         remember(cm, tick, 'promocao', `Eleito(a) Prefeito(a) pela ${this.policy.name}`);
       }
       const name = cm?.name ?? 'Independente';
-      const tag = emergency ? '🚨 ELEIÇÃO DE EMERGÊNCIA' : '🗳️ ELEIÇÃO';
+      const tag = recall ? '📉 RECALL (aprovação baixa)'
+        : emergency ? '🚨 ELEIÇÃO DE EMERGÊNCIA'
+        : '🗳️ ELEIÇÃO';
       this.feed({ tick, kind: 'global', text: `${tag}: ${name} eleito(a) prefeito(a) — ${this.policy.name} (${pct}%)` });
       this.feed({ tick, kind: 'global', text: `📜 NOVA LEI: imposto ${Math.round(this.policy.taxRate * 100)}% · sal. mín. $${Math.round(this.policy.minimumWage).toLocaleString('pt-BR')} · subsídio ${Math.round(this.policy.businessSubsidy * 100)}% · empregos públicos ${Math.round(this.policy.publicJobs * 100)}%` });
     }
@@ -196,7 +272,8 @@ export class Government {
     const monthlyWage = this.minimumWage * economy.wageLevel;
     // pode comprometer até 45% do caixa com folha pública
     const affordable = monthlyWage > 0 ? Math.floor((Math.max(0, this.budget) * 0.45) / monthlyWage) : 0;
-    const desired = Math.round(this.policy.publicJobs * unemployedIds.length);
+    // austeridade encolhe o programa de empregos públicos quando a dívida aperta
+    const desired = Math.round(this.policy.publicJobs * unemployedIds.length * this.austerity);
     const target = Math.min(desired, affordable + this.publicEmployees.size);
 
     const { cold } = this.world;
@@ -238,7 +315,10 @@ export class Government {
   /** Aloca subsídio a empresas e gasta em serviços públicos. */
   private spendBudget(): void {
     const pop = Math.max(1, this.world.aliveCount);
-    const available = Math.max(0, this.budget);
+    // Gasto discricionário baseado na RECEITA ESPERADA (não só no caixa do mês):
+    // permite DÉFICIT — em meses ruins o governo mantém serviços emitindo dívida.
+    // A austeridade reduz esse teto quando a dívida já está alta.
+    const available = Math.max(0, Math.max(this.budget, this.lastMonthRevenue) * this.austerity);
     // reserva para socorrer empresas (consumido dentro da economia)
     this.subsidyAllocated = Math.min(available * this.policy.businessSubsidy, available * 0.5);
 
@@ -273,6 +353,44 @@ export class Government {
   }
   beginSubsidyMonth(): void {
     this.lastSubsidySpent = 0;
+    // fecha a arrecadação do mês anterior (coletada durante o ciclo da economia)
+    this.lastMonthRevenue = this.revenueAccum;
+    this.revenueAccum = 0;
+    // razão dívida/receita anual define a austeridade: acima de 1× a receita
+    // anual, o governo corta gasto discricionário (piso de 40%).
+    const annualRev = Math.max(1, this.lastMonthRevenue * 12);
+    const ratio = this.debt / annualRev;
+    this.austerity = ratio > 1 ? Math.max(0.4, 1 - (ratio - 1) * 0.4) : 1;
+  }
+
+  /** Razão dívida / receita anual estimada (indicador de saúde fiscal). */
+  get debtToRevenue(): number {
+    return this.debt / Math.max(1, this.lastMonthRevenue * 12);
+  }
+
+  /**
+   * Serviço da dívida + financiamento de déficit. Roda ao fim do mês fiscal:
+   * déficit (caixa negativo) vira DÍVIDA; a dívida cobra JUROS com prêmio de
+   * risco que cresce com a razão dívida/receita; se não há caixa p/ os juros,
+   * eles capitalizam (bola de neve); superávit AMORTIZA a dívida.
+   */
+  private manageDebt(): void {
+    if (this.budget < 0) { this.debt += -this.budget; this.budget = 0; }
+    const annualRev = Math.max(1, this.lastMonthRevenue * 12);
+    const ratio = this.debt / annualRev;
+    const monthlyRate = 0.003 + Math.min(0.02, ratio * 0.004); // 0,3%..~2,3% a.m.
+    this.debtInterest = this.debt * monthlyRate;
+    if (this.budget >= this.debtInterest) {
+      this.budget -= this.debtInterest;
+    } else {
+      this.debt += this.debtInterest - this.budget; // capitaliza o que faltou
+      this.budget = 0;
+    }
+    if (this.debt > 0 && this.budget > 0) {
+      const pay = Math.min(this.debt, this.budget * 0.5); // metade do superávit amortiza
+      this.debt -= pay;
+      this.budget -= pay;
+    }
   }
 
   mayorName(): string | null {
@@ -288,15 +406,22 @@ export class Government {
     return {
       policy: this.policy, mayorId: this.mayorId, budget: this.budget,
       nextElectionTick: this.nextElectionTick, lastElectionTick: this.lastElectionTick,
-      publicEmployees: [...this.publicEmployees],
+      publicEmployees: [...this.publicEmployees], approval: this.approval,
+      debt: this.debt, lastMonthRevenue: this.lastMonthRevenue,
     };
   }
   restore(d: ReturnType<Government['dump']>): void {
-    this.policy = d.policy;
+    // saves antigos podem não ter corporateTax/propertyTax — herda da plataforma
+    // de mesmo nome (ou do Centro) para não gerar alíquotas indefinidas (NaN).
+    const base = PLATFORMS.find((p) => p.name === d.policy?.name) ?? PLATFORMS[1];
+    this.policy = { ...base, ...d.policy };
     this.mayorId = d.mayorId;
     this.budget = d.budget;
     this.nextElectionTick = d.nextElectionTick;
     this.lastElectionTick = d.lastElectionTick ?? 0;
     this.publicEmployees = new Set(d.publicEmployees ?? []);
+    this.approval = d.approval ?? 50;
+    this.debt = d.debt ?? 0;
+    this.lastMonthRevenue = d.lastMonthRevenue ?? 0;
   }
 }

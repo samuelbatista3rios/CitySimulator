@@ -10,6 +10,8 @@ import { Vehicles } from './Vehicles';
 import { DayNight } from './DayNight';
 import { InstitutionMarkers } from './InstitutionMarkers';
 import { VenueMarkers } from './VenueMarkers';
+import { Stadium } from './Stadium';
+import { HeatmapOverlay } from './HeatmapOverlay';
 import { useGenesis } from '../state/store';
 
 /**
@@ -51,6 +53,8 @@ export function CityScene() {
 
       <Ground />
       <Buildings />
+      <Stadium />
+      <HeatmapOverlay />
       <Citizens />
       <Vehicles />
       <InstitutionMarkers />

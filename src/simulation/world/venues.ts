@@ -1,7 +1,18 @@
 import type { HotComponents, ColdData } from '../ecs/components';
 import type { RNG } from '../rng';
-import type { VenueType, VenueMarker } from '../types';
+import type { VenueType, VenueMarker, Sector } from '../types';
 import { practiceSkill } from '../agents/skills';
+
+/** Setor econômico que recebe o gasto de cada tipo de local de lazer. */
+export const VENUE_SECTOR: Record<VenueType, Sector | null> = {
+  restaurante: 'comercio',
+  bar: 'comercio',
+  cinema: 'cultura',
+  teatro: 'cultura',
+  estadio: 'esporte',
+  ginasio: 'esporte',
+  templo: null, // fé é de graça — não gera receita de empresa
+};
 
 export interface Venue {
   type: VenueType;
@@ -84,31 +95,32 @@ export function applyVenueVisit(
   type: VenueType,
   funPrice: number,
   foodPrice: number,
-): void {
+): number {
   const add = (arr: Float32Array, v: number) => (arr[id] = Math.min(100, arr[id] + v));
+  let spent = 0;
   switch (type) {
     case 'restaurante':
-      hot.money[id] -= foodPrice * 4;
+      spent = foodPrice * 4;
       add(hot.hunger, 45); add(hot.fun, 10); add(hot.fulfillment, 8); add(hot.social, 8);
       break;
     case 'bar':
-      hot.money[id] -= funPrice * 1.2;
+      spent = funPrice * 1.2;
       add(hot.social, 25); add(hot.fun, 18); add(hot.fulfillment, 10);
       break;
     case 'cinema':
-      hot.money[id] -= funPrice;
+      spent = funPrice;
       add(hot.fun, 22); add(hot.fulfillment, 12);
       break;
     case 'teatro':
-      hot.money[id] -= funPrice * 1.6;
+      spent = funPrice * 1.6;
       add(hot.fun, 15); add(hot.fulfillment, 22);
       break;
     case 'estadio':
-      hot.money[id] -= funPrice * 1.3;
+      spent = funPrice * 1.3;
       add(hot.fun, 26); add(hot.social, 15); add(hot.fulfillment, 16);
       break;
     case 'ginasio':
-      hot.money[id] -= funPrice * 0.6;
+      spent = funPrice * 0.6;
       add(hot.fun, 8); add(hot.health, 6); add(hot.fulfillment, 14);
       // praticar esporte (pode virar talento → atleta profissional)
       practiceSkill(cold, 'esporte', hot.intelligence[id], 1.2);
@@ -119,4 +131,6 @@ export function applyVenueVisit(
       add(hot.happiness, 4);
       break;
   }
+  hot.money[id] -= spent;
+  return spent; // valor gasto (vira receita do setor correspondente)
 }

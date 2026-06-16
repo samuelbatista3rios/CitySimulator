@@ -37,6 +37,10 @@ export class EcsWorld {
     this.hot.companyId[id] = -1;
     this.hot.jobLevel[id] = -1;
     this.hot.partnerId[id] = -1;
+    this.hot.criminalRecord[id] = 0;
+    this.hot.inJail[id] = 0;
+    this.hot.publicJob[id] = 0;
+    this.hot.unpaidMonths[id] = 0;
     this.aliveCount--;
     this.freeList.push(id);
     // Mantemos cold data para histórico/árvore familiar (nome de falecidos).

@@ -6,6 +6,8 @@ import { useGenesis } from '../state/store';
 const MAX_RENDERED = 20000;
 /** LOD: cidadãos além desta distância da câmera não são desenhados. */
 const LOD_DISTANCE = 220;
+/** Salto maior que isto = teleporte (snap), não um trajeto a pé (evita "atravessar" prédios). */
+const SNAP_DISTANCE = 8;
 
 const ACTIVITY_COLORS: THREE.Color[] = [
   new THREE.Color('#d8d8d8'), // ocioso
@@ -85,8 +87,19 @@ export function Citizens() {
         p = { x: tx, z: tz };
         map.set(id, p);
       } else {
-        p.x += (tx - p.x) * lerp;
-        p.z += (tz - p.z) * lerp;
+        // A posição lógica do cidadão "teleporta" para o destino (ir trabalhar,
+        // casa, lazer...). Se interpolássemos sempre, ele deslizaria em linha reta
+        // ATRAVESSANDO os prédios até um ponto distante. Em saltos grandes fazemos
+        // snap (reaparece no destino); só suavizamos micro-movimentos na vizinhança.
+        const ddx = tx - p.x;
+        const ddz = tz - p.z;
+        if (ddx * ddx + ddz * ddz > SNAP_DISTANCE * SNAP_DISTANCE) {
+          p.x = tx;
+          p.z = tz;
+        } else {
+          p.x += ddx * lerp;
+          p.z += ddz * lerp;
+        }
       }
       if (id === hovered.current) {
         // destaque: maior e branco

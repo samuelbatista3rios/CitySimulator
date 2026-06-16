@@ -30,6 +30,8 @@ export class TrafficSystem {
   private gridN: number;
   private cell: number;
   private half: number;
+  /** células intrafegáveis (chave "gx,gz"): lago + complexo do estádio */
+  private blocked = new Set<string>();
 
   constructor(private rng: RNG, worldSize: number, blockSpan: number) {
     this.gridN = Math.ceil(worldSize / blockSpan);
@@ -38,9 +40,39 @@ export class TrafficSystem {
     this.density = new Uint16Array(this.gridN * this.gridN);
   }
 
+  /** Informa as células onde não pode haver trânsito (lago, estádio…). */
+  setBlocked(cells: Set<string>): void {
+    this.blocked = cells;
+  }
+
+  private isBlocked(gx: number, gz: number): boolean {
+    return this.blocked.has(`${gx},${gz}`);
+  }
+
+  /**
+   * A rota em "L" cruza o interior de uma área intrafegável (lago/estádio)? Uma
+   * via só está "por dentro" quando os DOIS quarteirões que ela margeia são
+   * bloqueados. Margear a borda (bloqueio de um lado só) é permitido.
+   */
+  private routeCrossesBlocked(sx: number, sz: number, dx: number, dz: number): boolean {
+    const idx = (v: number) => Math.round((this.snapLine(v) + this.half) / this.cell);
+    const csx = idx(sx), cdx = idx(dx), csz = idx(sz), cdz = idx(dz);
+    // perna 1: horizontal na fronteira de linha csz (entre linhas csz-1 e csz)
+    for (let c = Math.min(csx, cdx); c <= Math.max(csx, cdx); c++) {
+      if (this.isBlocked(c, csz - 1) && this.isBlocked(c, csz)) return true;
+    }
+    // perna 2: vertical na fronteira de coluna cdx (entre colunas cdx-1 e cdx)
+    for (let r = Math.min(csz, cdz); r <= Math.max(csz, cdz); r++) {
+      if (this.isBlocked(cdx - 1, r) && this.isBlocked(cdx, r)) return true;
+    }
+    return false;
+  }
+
   /** Despacha um veículo do cidadão `owner` de (x,z) até (dx,dz). */
   dispatch(owner: number, sx: number, sz: number, dx: number, dz: number): boolean {
     if (this.count >= this.cap) return false;
+    // não despacha carro cuja rota cruzaria o interior do lago ou do estádio
+    if (this.routeCrossesBlocked(sx, sz, dx, dz)) return false;
     let slot = -1;
     for (let i = 0; i < this.cap; i++) {
       if (!this.active[i]) { slot = i; break; }

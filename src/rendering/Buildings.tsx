@@ -7,6 +7,10 @@ const ZONE_PALETTE: Record<string, THREE.Color[]> = {
   comercial: ['#d6a26b', '#c98f5a', '#e0b483'].map((c) => new THREE.Color(c)),
   industrial: ['#8d8d96', '#7a7a85', '#9d9da6'].map((c) => new THREE.Color(c)),
   residencial: ['#d9c4a5', '#c4ad8d', '#e6d5b8', '#cbb59a'].map((c) => new THREE.Color(c)),
+  // bairro nobre: tons claros de mármore/creme e telhados elegantes
+  nobre: ['#efe9dc', '#f5efe2', '#e8dcc6', '#d8c9a8', '#f0e6d2'].map((c) => new THREE.Color(c)),
+  // bairro boêmio: fachadas coloridas (galerias, bares, teatros)
+  boemio: ['#c96b8e', '#7a5fb0', '#d99b4e', '#5fa6b0', '#b85f7a'].map((c) => new THREE.Color(c)),
 };
 
 /**
@@ -29,7 +33,7 @@ export function Buildings() {
     const s = new THREE.Vector3();
     const p = new THREE.Vector3();
     layout.buildings.forEach((b, i) => {
-      p.set(b.x, 0.1, b.z);
+      p.set(b.x, 0.1 + (b.elevation ?? 0), b.z); // assenta no relevo do terreno
       s.set(b.w, b.h, b.d);
       m.compose(p, q, s);
       im.setMatrixAt(i, m);

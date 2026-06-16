@@ -15,11 +15,12 @@ import { generateCompanies, createCompany, sectorSkill, totalOpenings, type Comp
 import { CareerSystem } from './economy/careers';
 import { EconomySystem } from './economy/economy';
 import { Bank } from './economy/bank';
+import { HousingMarket } from './economy/housing';
 import { Government } from './government/government';
 import { InstitutionSystem } from './institutions/institutions';
 import { GlobalEventSystem } from './events/globalEvents';
 import { TrafficSystem } from './traffic/traffic';
-import { buildVenues, chooseVenue, applyVenueVisit, VENUE_INFO, type Venue } from './world/venues';
+import { buildVenues, chooseVenue, applyVenueVisit, VENUE_INFO, VENUE_SECTOR, type Venue } from './world/venues';
 import {
   Activity,
   ACTIVITY_LABELS,
@@ -28,6 +29,8 @@ import {
   type FeedItem,
   type CompanyView,
   type Sector,
+  type MonitorData,
+  type HeatmapData,
 } from './types';
 
 const DAYS_PER_YEAR = CONFIG.DAYS_PER_MONTH * CONFIG.MONTHS_PER_YEAR;
@@ -50,6 +53,7 @@ export class Simulation {
   careers: CareerSystem;
   economy: EconomySystem;
   bank: Bank;
+  housing: HousingMarket;
   government: Government;
   institutions: InstitutionSystem;
   relationships: RelationshipSystem;
@@ -69,12 +73,16 @@ export class Simulation {
     this.world = new EcsWorld();
     this.city = generateCity(this.rng);
     this.venues = buildVenues(this.city.leisureSpots, this.rng);
+    // estádio de futebol: venue esportivo garantido no local designado da cidade
+    if (this.city.stadium) {
+      this.venues.push({ type: 'estadio', x: this.city.stadium.x, z: this.city.stadium.z });
+    }
     for (const v of this.venues) {
       const list = this.venuesByType.get(v.type) ?? [];
       list.push(v);
       this.venuesByType.set(v.type, list);
     }
-    this.companies = generateCompanies(this.rng, this.city);
+    this.companies = generateCompanies(this.rng, this.city, population);
     this.createSportsClubs();
 
     const feed = (item: FeedItem) => {
@@ -85,12 +93,25 @@ export class Simulation {
     this.careers = new CareerSystem(this.world, this.companies, this.rng, feed);
     this.economy = new EconomySystem(this.world, this.companies, this.careers, this.rng, feed);
     this.bank = new Bank(this.world, this.rng, feed);
+    this.housing = new HousingMarket(this.world, this.city);
+    this.economy.rentFactor = (homeId) => this.housing.rentFactor(homeId);
     this.government = new Government(this.world, this.rng, feed);
     this.institutions = new InstitutionSystem(this.world, this.city, this.careers, this.rng, feed);
     this.relationships = new RelationshipSystem(this.world, this.rng, feed);
     this.lifecycle = new LifecycleSystem(this.world, this.city, this.careers, this.rng, feed);
     this.events = new GlobalEventSystem(this.rng, this.economy, this.lifecycle, feed);
+    // Ganchos dos eventos instantâneos (leis/empresas/imóveis)
+    this.events.hooks = {
+      spawnCompanies: (n) => this.replenishCompanies(n, this.tick),
+      failCompanies: (frac) => this.failWeakCompanies(frac, this.tick),
+      mergeCompanies: () => this.mergeTwoCompanies(this.tick),
+      housingShock: (mult) => { this.housing.priceIndex = Math.max(0.4, Math.min(6, this.housing.priceIndex * mult)); },
+      approvalDelta: (d) => { this.government.approval = Math.max(0, Math.min(100, this.government.approval + d)); },
+      budgetInject: (amt) => { this.government.budget += amt; },
+    };
     this.traffic = new TrafficSystem(this.rng, this.city.worldSize, this.city.blockSpan);
+    // trânsito não cruza o lago nem o complexo do estádio
+    this.traffic.setBlocked(new Set([...this.city.lakeCells, ...this.city.stadiumCells]));
 
     // Liga economia ↔ banco ↔ governo
     this.economy.bank = this.bank;
@@ -111,20 +132,35 @@ export class Simulation {
   }
 
   private populate(population: number): void {
-    const resCount = this.city.residences.length;
+    // residências comuns (as de luxo do bairro nobre ficam vagas, reservadas
+    // aos mais ricos — preenchidas depois por mobilidade residencial)
+    const commonRes = this.city.residences.filter((r) => !r.premium).map((r) => r.id);
+    const resCount = commonRes.length;
     for (let i = 0; i < population; i++) {
-      const res = i % resCount; // ~2 pessoas por residência
+      const res = commonRes[i % resCount]; // ~2 pessoas por residência
       const id = spawnCitizen(this.world, this.rng, this.city, res);
       if (id === -1) break;
     }
-    // Emprego inicial: ~90% dos adultos
+    // Emprego inicial: contratação THOROUGH em várias rodadas — preenche as vagas
+    // existentes de fato (antes uma passada rasa deixava ~20% de desemprego mesmo
+    // com vagas sobrando). O que sobra é desemprego estrutural/friccional realista.
     const { hot } = this.world;
+    const workers: number[] = [];
     for (const id of this.world.aliveEntities()) {
       const age = hot.ageDays[id] / DAYS_PER_YEAR;
-      if (age >= CONFIG.ADULT_AGE && age < CONFIG.RETIREMENT_AGE && this.rng.chance(0.9)) {
-        this.careers.tryGetJob(id, 0);
-      }
+      if (age >= CONFIG.ADULT_AGE && age < CONFIG.RETIREMENT_AGE) workers.push(id);
     }
+    for (let round = 0; round < 4; round++) {
+      let hired = 0;
+      for (const id of workers) {
+        if (hot.companyId[id] !== -1 || hot.isOwner[id]) continue;
+        if (this.careers.tryGetJob(id, 0)) hired++;
+      }
+      this.careers.rebuildHiringIndex();
+      if (hired === 0) break;
+    }
+    // povoa o bairro nobre com as famílias mais ricas no início ("old money")
+    this.housing.seedNoble(this.economy.priceLevel);
   }
 
   // ---------------------------------------------------------------- tick
@@ -144,14 +180,21 @@ export class Simulation {
       this.government.monthlyCycle(this.tick, this.economy);
       // 2) Economia roda sob as leis vigentes (já possivelmente atualizadas).
       this.economy.taxRate = this.government.taxRate;
+      this.economy.corporateTaxRate = this.government.corporateTax;
+      this.economy.propertyTaxMonthly = this.government.propertyTax;
       this.economy.minimumWage = this.government.minimumWage;
       this.economy.subsidyPool = this.government.subsidyAllocated;
+      this.economy.laborSlack = this.government.unemploymentRate; // gate de crescimento de vagas
+      this.housing.update(this.economy.priceLevel); // índice imobiliário (oferta×demanda)
       this.economy.monthlyCycle(this.tick);
+      this.housing.sortWealthIntoNoble(this.economy.priceLevel); // mobilidade p/ o bairro nobre
       this.institutions.monthlyCycle(this.tick, this.government); // saúde, educação, crime/polícia
       this.careers.monthlyCareerMoves(this.tick);
       this.relationships.monthlyCouples(this.tick);
+      this.lifecycle.healthcareAccess = this.government.healthFunding; // saúde pública ↓ mortalidade
       this.lifecycle.monthlyCycle(this.tick);
       this.events.monthlyCycle(this.tick);
+      this.holdStadiumMatch(this.tick);
     }
     if (this.tick % TICKS_PER_YEAR === 0) {
       this.lifecycle.resetYearCounters();
@@ -171,7 +214,10 @@ export class Simulation {
       h.sleep[i] = Math.max(0, h.sleep[i] - CONFIG.DECAY_SLEEP);
       h.social[i] = Math.max(0, h.social[i] - CONFIG.DECAY_SOCIAL);
       h.fun[i] = Math.max(0, h.fun[i] - CONFIG.DECAY_FUN);
-      h.safety[i] = Math.min(100, Math.max(0, h.safety[i] - CONFIG.DECAY_SAFETY + (h.money[i] > 2000 ? 0.4 : 0)));
+      // segurança privada do bairro nobre (condomínio fechado) eleva a sensação de segurança
+      const home = h.homeId[i];
+      const gated = home !== -1 && this.city.residences[home]?.premium ? 0.6 : 0;
+      h.safety[i] = Math.min(100, Math.max(0, h.safety[i] - CONFIG.DECAY_SAFETY + (h.money[i] > 2000 ? 0.4 : 0) + gated));
       // realização decai devagar, mas a FÉ e a FAMA dão um piso (conforto/propósito)
       const c = this.world.cold[i];
       const floor = c ? Math.max(c.religiosidade * 0.35, h.fame[i] * 0.5) : h.fame[i] * 0.5;
@@ -293,7 +339,12 @@ export class Simulation {
         const compId = hot.companyId[i];
         if (compId !== -1) {
           const comp = this.companies[compId];
-          goTo(comp.x, comp.z, comp.buildingId);
+          // atletas dos clubes esportivos trabalham/jogam NO ESTÁDIO
+          if (comp.sector === 'esporte' && this.city.stadium) {
+            goTo(this.city.stadium.x, this.city.stadium.z, comp.buildingId);
+          } else {
+            goTo(comp.x, comp.z, comp.buildingId);
+          }
           hot.activity[i] = Activity.Working;
           hot.activityUntil[i] = this.tick + 8;
         }
@@ -329,10 +380,17 @@ export class Simulation {
       case 'Investir':
         hot.activity[i] = Activity.Working;
         hot.activityUntil[i] = this.tick + 2;
-        // investimento: retorno esperado positivo com variância
+        // Investimento de mercado: RISCO REAL (retorno médio ~0) sobre uma base
+        // LIMITADA. Antes o retorno tinha média positiva e era composto sobre todo
+        // o patrimônio a cada ação → "impressora de dinheiro" que gerava fortunas
+        // impossíveis. Agora o ganho esperado é ínfimo e o volatility drag impede
+        // o crescimento exponencial descontrolado.
         {
-          const amount = hot.money[i] * 0.1;
-          hot.money[i] += amount * this.rng.range(-0.5, 0.8);
+          const exposable = Math.min(hot.money[i], 200_000 * this.economy.priceLevel);
+          if (exposable > 0) {
+            const amount = exposable * 0.1;
+            hot.money[i] += amount * this.rng.range(-0.55, 0.55);
+          }
         }
         break;
       case 'AbrirEmpresa':
@@ -413,12 +471,14 @@ export class Simulation {
         case Activity.Eating:
           hot.hunger[i] = Math.min(100, hot.hunger[i] + 55);
           hot.money[i] -= this.economy.foodPrice;
+          this.economy.spend('comercio', this.economy.foodPrice); // alimentação → comércio
           break;
         case Activity.JobHunting:
           this.careers.tryGetJob(i, this.tick);
           break;
         case Activity.Shopping: {
           hot.money[i] -= this.economy.foodPrice * 3;
+          this.economy.spend('comercio', this.economy.foodPrice * 3); // varejo → comércio
           hot.hunger[i] = Math.min(100, hot.hunger[i] + 20);
           // grandes compras guiadas por objetivos: à vista OU financiadas
           const c = cold[i];
@@ -435,7 +495,7 @@ export class Simulation {
             } else if (!hot.ownsHouse[i] && hot.homeId[i] !== -1 &&
                 c.goals.some((g) => g.kind === 'comprar_casa')) {
               const resH = this.city.residences[hot.homeId[i]];
-              const price = resH.price * this.economy.priceLevel;
+              const price = this.housing.valueOf(resH.id) * this.economy.priceLevel;
               if (resH.ownerId === -1) {
                 if (hot.money[i] > price * 1.1) {
                   hot.money[i] -= price;
@@ -460,11 +520,54 @@ export class Simulation {
     }
   }
 
+  /**
+   * Jogo no estádio: dois clubes se enfrentam. O vencedor sai pela força do
+   * elenco (produtividade) + sorte; seus atletas ganham fama e ânimo, e os
+   * torcedores (hobby estádio) curtem a partida. Aparece no feed da cidade.
+   */
+  private holdStadiumMatch(tick: number): void {
+    if (!this.city.stadium) return;
+    const clubs = this.companies.filter((c) => c.sector === 'esporte' && !c.bankrupt && c.employees.size > 0);
+    if (clubs.length < 2 || !this.rng.chance(0.8)) return;
+    const a = clubs[this.rng.int(0, clubs.length - 1)];
+    let b = a;
+    for (let g = 0; g < 6 && b === a; g++) b = clubs[this.rng.int(0, clubs.length - 1)];
+    if (b === a) return;
+
+    const sa = a.lastProductivity * this.rng.range(0.7, 1.3);
+    const sb = b.lastProductivity * this.rng.range(0.7, 1.3);
+    const win = sa >= sb ? a : b;
+    const lose = win === a ? b : a;
+    this.feedBuffer.push({ tick, kind: 'social', text: `⚽ Jogo no estádio: ${a.name} x ${b.name} — vitória do ${win.name}` });
+
+    const { hot, cold } = this.world;
+    for (const emp of win.employees) {
+      hot.fame[emp] = Math.min(100, hot.fame[emp] + 2);
+      hot.fulfillment[emp] = Math.min(100, hot.fulfillment[emp] + 5);
+      hot.happiness[emp] = Math.min(100, hot.happiness[emp] + 4);
+    }
+    for (const emp of lose.employees) hot.happiness[emp] = Math.max(0, hot.happiness[emp] - 2);
+    // torcida: quem tem o estádio como hobby aproveita o espetáculo
+    for (let i = 0; i < this.world.entityRange; i++) {
+      if (!hot.alive[i]) continue;
+      const c = cold[i];
+      if (c && c.hobby === 'estadio') {
+        hot.fun[i] = Math.min(100, hot.fun[i] + 6);
+        hot.fulfillment[i] = Math.min(100, hot.fulfillment[i] + 4);
+      }
+    }
+  }
+
   /** Empreendedorismo: cria empresa nova num prédio comercial com vaga. */
   private foundCompany(i: number): void {
     const { hot, cold } = this.world;
     const c = cold[i];
     if (!c || hot.money[i] < CONFIG.BUSINESS_STARTUP_COST) return;
+    // Saturação de mercado: não abre nova empresa se já há firmas demais para a
+    // mão de obra (mantém empresas com quadro saudável em vez de vagas vazias).
+    let active = 0;
+    for (const co of this.companies) if (!co.bankrupt) active++;
+    if (active >= this.world.aliveCount / 11) return;
     const pool = [
       ...(this.city.byZone.get('comercial') ?? []),
       ...(this.city.byZone.get('centro') ?? []),
@@ -498,20 +601,33 @@ export class Simulation {
     const v = list && list.length
       ? list[this.rng.int(0, list.length - 1)]
       : this.venues.length ? this.venues[this.rng.int(0, this.venues.length - 1)] : null;
-    applyVenueVisit(this.world.hot, cold, i, type, this.economy.funPrice, this.economy.foodPrice);
+    const spent = applyVenueVisit(this.world.hot, cold, i, type, this.economy.funPrice, this.economy.foodPrice);
+    // o gasto de lazer vira receita do setor correspondente (comércio/cultura/esporte)
+    const sector = VENUE_SECTOR[type];
+    if (sector) this.economy.spend(sector, spent);
     return v ? { x: v.x, z: v.z } : null;
   }
 
   /** Cria clubes esportivos: empregam os talentosos como atletas (bem pagos). */
   private createSportsClubs(): void {
-    const pool = [
+    let pool = [
       ...(this.city.byZone.get('comercial') ?? []),
       ...(this.city.byZone.get('centro') ?? []),
     ];
     if (pool.length === 0) return;
     const n = Math.max(8, Math.round(this.city.residences.length / 350)); // ~14 clubes
+    // clubes se instalam PERTO DO ESTÁDIO (polo esportivo da cidade)
+    const st = this.city.stadium;
+    if (st) {
+      pool = [...pool].sort(
+        (a, b) => Math.hypot(a.x - st.x, a.z - st.z) - Math.hypot(b.x - st.x, b.z - st.z),
+      );
+    }
     for (let k = 0; k < n; k++) {
-      const bld = pool[this.rng.int(0, pool.length - 1)];
+      // os primeiros clubes ficam junto ao estádio; os demais espalham
+      const bld = st && k < Math.min(pool.length, Math.ceil(n * 0.6))
+        ? pool[k % pool.length]
+        : pool[this.rng.int(0, pool.length - 1)];
       const club = createCompany(this.rng, this.companies.length, bld, 'esporte', this.rng.int(6, 16), 0, -1, 1.8);
       this.companies.push(club);
     }
@@ -536,6 +652,38 @@ export class Simulation {
       this.companies.push(company);
     }
     this.careers.rebuildHiringIndex();
+  }
+
+  /** Onda de falências: quebra uma fração das empresas mais frágeis (menor capital). */
+  private failWeakCompanies(fraction: number, tick: number): void {
+    const active = this.companies.filter((c) => !c.bankrupt);
+    if (active.length === 0) return;
+    active.sort((a, b) => a.capital - b.capital);
+    const n = Math.max(1, Math.floor(active.length * fraction));
+    for (let k = 0; k < n; k++) this.economy.forceBankrupt(active[k], tick);
+  }
+
+  /** Megafusão: uma empresa absorve outra do mesmo setor (capital + quadro). */
+  private mergeTwoCompanies(tick: number): string | null {
+    const { hot } = this.world;
+    const active = this.companies.filter((c) => !c.bankrupt && c.employees.size > 0);
+    if (active.length < 2) return null;
+    const a = active[this.rng.int(0, active.length - 1)];
+    const sameSector = active.filter((c) => c !== a && c.sector === a.sector);
+    const candidates = sameSector.length ? sameSector : active.filter((c) => c !== a);
+    if (candidates.length === 0) return null;
+    const b = candidates[this.rng.int(0, candidates.length - 1)];
+    // 'a' absorve 'b': transfere capital e funcionários
+    a.capital += b.capital;
+    for (const emp of b.employees) {
+      hot.companyId[emp] = a.id;
+      a.employees.add(emp);
+    }
+    b.employees.clear();
+    b.bankrupt = true;
+    b.openings = b.openings.map(() => 0);
+    this.careers.rebuildHiringIndex();
+    return a.name;
   }
 
   // ---------------------------------------------------------------- consultas
@@ -597,6 +745,9 @@ export class Simulation {
       desemprego: unemployment,
       empresas: eco.activeCompanies,
       empresasFalidas: eco.bankrupt,
+      consumoFamilias: eco.consumoFamilias,
+      dividendos: eco.dividendos,
+      investimentoPED: eco.investimentoPED,
       criminalidade: crime,
       felicidadeMedia: avgHappiness,
       educacaoMedia: pop > 0 ? eduScore / pop : 0,
@@ -606,14 +757,24 @@ export class Simulation {
       nascimentosAno: this.lifecycle.birthsThisYear,
       mortesAno: this.lifecycle.deathsThisYear,
       casamentosAno: this.relationships.marriagesThisYear,
+      expectativaVida: this.lifecycle.lifeExpectancy,
       eventoAtivo: this.events.active?.label ?? null,
       fps: realTPS,
       // Governo & leis
       prefeito: this.government.mayorName(),
       plataforma: this.government.policy.name,
-      imposto: this.government.taxRate * 100,
+      aprovacao: this.government.mayorId !== -1 ? this.government.approval : 0,
+      imposto: this.government.taxRate * 2 * 100, // topo marginal do IR progressivo
+      impostoCorporativo: this.government.corporateTax * 100,
+      impostoPropriedade: this.government.propertyTax * 100,
+      arrecadacaoIR: this.economy.incomeTaxThisMonth,
+      arrecadacaoCorp: this.economy.corpTaxThisMonth,
+      arrecadacaoIPTU: this.economy.propertyTaxThisMonth,
       salarioMinimo: this.government.minimumWage,
       orcamentoPublico: this.government.budget,
+      dividaPublica: this.government.debt,
+      jurosDivida: this.government.debtInterest,
+      austeridade: this.government.austerity < 0.999,
       proximaEleicaoAnos: yearsToElection,
       // Instituições
       crimesAno: this.institutions.crimesThisYear,
@@ -631,6 +792,10 @@ export class Simulation {
       // Finanças
       inadimplencia: bankStats.inadimplentes,
       scoreCreditoMedio: bankStats.scoreMedio,
+      // Imobiliário
+      indiceImobiliario: this.housing.priceIndex,
+      precoMedioImovel: this.housing.avgPrice,
+      taxaProprietarios: this.housing.ownershipRate * 100,
     };
   }
 
@@ -680,19 +845,44 @@ export class Simulation {
       objetivos: c.goals,
       amigos: friends,
       conjuge: partner !== -1 ? { id: partner, nome: nameOf(partner) } : null,
+      avos: this.kin(id, 'avos').map((k) => ({ id: k, nome: nameOf(k) })),
       pais: c.parents.map((p) => ({ id: p, nome: nameOf(p) })),
+      irmaos: this.kin(id, 'irmaos').map((k) => ({ id: k, nome: nameOf(k) })),
       filhos: c.children.map((f) => ({ id: f, nome: nameOf(f) })),
+      netos: this.kin(id, 'netos').map((k) => ({ id: k, nome: nameOf(k) })),
       memorias: [...c.memory].reverse().slice(0, 25),
       temCasaPropria: hot.ownsHouse[id] === 1,
+      valorImovel: hot.ownsHouse[id] && hot.homeId[id] !== -1
+        ? Math.round(this.housing.valueOf(hot.homeId[id]) * this.economy.priceLevel)
+        : null,
       temCarro: hot.ownsCar[id] === 1,
       planoAtual: c.currentPlan,
       prefeito: hot.isMayor[id] === 1,
       preso: hot.inJail[id] === 1,
-      criminoso: c.memory.some((m) => m.text === 'Cometeu um crime'),
+      criminoso: hot.criminalRecord[id] > 0 || c.memory.some((m) => m.text.startsWith('Cometeu')),
+      fichaCriminal: hot.criminalRecord[id],
       scoreCredito: Math.round(hot.creditScore[id]),
       emprestimos: this.bank.loanViews(id),
       contasAtrasadas: hot.unpaidMonths[id],
     };
+  }
+
+  /** Parentesco estendido (avós, irmãos, netos) percorrendo pais/filhos. */
+  private kin(id: number, rel: 'avos' | 'irmaos' | 'netos'): number[] {
+    const cold = this.world.cold;
+    const c = cold[id];
+    if (!c) return [];
+    const out: number[] = [];
+    const seen = new Set<number>([id]);
+    const push = (x: number) => { if (!seen.has(x)) { seen.add(x); out.push(x); } };
+    if (rel === 'avos') {
+      for (const p of c.parents) { const cp = cold[p]; if (cp) for (const gp of cp.parents) push(gp); }
+    } else if (rel === 'irmaos') {
+      for (const p of c.parents) { const cp = cold[p]; if (cp) for (const sib of cp.children) push(sib); }
+    } else {
+      for (const ch of c.children) { const cc = cold[ch]; if (cc) for (const gc of cc.children) push(gc); }
+    }
+    return out;
   }
 
   /** Busca por nome (case-insensitive) — para a barra de pesquisa da UI. */
@@ -725,37 +915,176 @@ export class Simulation {
   /** Layout estático da cidade (enviado uma vez ao cliente). */
   layoutData() {
     return {
-      blocks: this.city.blocks.map((b) => ({ x: b.x, z: b.z, zone: b.zone })),
+      blocks: this.city.blocks.map((b) => ({ x: b.x, z: b.z, zone: b.zone, elevation: b.elevation })),
       buildings: this.city.buildings.map((b) => ({
-        id: b.id, x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, zone: b.zone,
+        id: b.id, x: b.x, z: b.z, w: b.w, d: b.d, h: b.h, zone: b.zone, elevation: b.elevation,
       })),
       institutions: this.institutions.markers(),
       venues: this.venues.map((v) => ({ type: v.type, x: v.x, z: v.z })),
       worldSize: this.city.worldSize,
       blockSpan: this.city.blockSpan,
+      stadium: this.city.stadium,
+      nobleCenter: this.city.nobleCenter,
+      boemioCenter: this.city.boemioCenter,
     };
   }
 
-  companyViews(): CompanyView[] {
+  companyViews(sort: import('./types').CompanySort = 'capital'): CompanyView[] {
+    const { hot, cold } = this.world;
+    const wage = this.economy.wageLevel;
+    const cmp =
+      sort === 'receita' ? (a: Company, b: Company) => b.revenueThisMonth - a.revenueThisMonth
+      : sort === 'recentes' ? (a: Company, b: Company) => b.foundedTick - a.foundedTick
+      : (a: Company, b: Company) => b.capital - a.capital;
     return this.companies
       .filter((c) => !c.bankrupt)
-      .sort((a, b) => b.capital - a.capital)
+      .sort(cmp)
       .slice(0, 50)
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        sector: c.sector,
-        capital: Math.round(c.capital),
-        employees: c.employees.size,
-        openPositions: totalOpenings(c),
-        bankrupt: c.bankrupt,
-      }));
+      .map((c) => {
+        // headcount por nível de cargo
+        const filled = c.positions.map(() => 0);
+        for (const emp of c.employees) {
+          const lvl = Math.max(0, Math.min(c.positions.length - 1, hot.jobLevel[emp]));
+          filled[lvl]++;
+        }
+        const positions = c.positions.map((p, lvl) => ({
+          title: p.title,
+          salary: Math.round(p.salary * wage),
+          minSkill: p.minSkill,
+          filled: filled[lvl],
+          open: c.openings[lvl] ?? 0,
+        }));
+        const payroll = positions.reduce((s, p) => s + p.salary * p.filled, 0);
+        const headcount = c.employees.size;
+        return {
+          id: c.id,
+          name: c.name,
+          sector: c.sector,
+          capital: Math.round(c.capital),
+          employees: headcount,
+          openPositions: totalOpenings(c),
+          bankrupt: c.bankrupt,
+          ownerName: c.ownerId >= 0 ? cold[c.ownerId]?.name ?? null : null,
+          revenue: Math.round(c.revenueThisMonth),
+          dividends: Math.round(c.dividendsThisMonth),
+          productivity: c.lastProductivity,
+          price: c.price,
+          techLevel: c.techLevel,
+          foundedYear: Math.floor(c.foundedTick / TICKS_PER_YEAR) + 1,
+          avgSalary: headcount > 0 ? Math.round(payroll / headcount) : 0,
+          positions,
+        };
+      });
   }
 
   drainFeed(): FeedItem[] {
     const items = this.feedBuffer;
     this.feedBuffer = [];
     return items;
+  }
+
+  /** Distribuição/desigualdade + rankings (painel de monitoramento, sob demanda). */
+  monitorData(): MonitorData {
+    const { hot, cold } = this.world;
+    const wealth: number[] = [];
+    const pm = new Array(10).fill(0), pf = new Array(10).fill(0);
+    const escolaridade = { fundamental: 0, medio: 0, superior: 0, pos: 0 };
+    const all: { id: number; money: number; fame: number }[] = [];
+    for (let i = 0; i < this.world.entityRange; i++) {
+      if (!hot.alive[i]) continue;
+      const age = hot.ageDays[i] / DAYS_PER_YEAR;
+      const bucket = Math.min(9, Math.floor(age / 10));
+      if (hot.sexF[i]) pf[bucket]++; else pm[bucket]++;
+      const c = cold[i];
+      if (c) escolaridade[c.education]++;
+      if (age >= CONFIG.ADULT_AGE) {
+        wealth.push(hot.money[i]);
+        all.push({ id: i, money: hot.money[i], fame: hot.fame[i] });
+      }
+    }
+    wealth.sort((a, b) => a - b);
+    const n = wealth.length || 1;
+    const total = wealth.reduce((s, v) => s + Math.max(0, v), 0) || 1;
+    // Gini (sobre riqueza não-negativa)
+    let cum = 0;
+    for (let i = 0; i < wealth.length; i++) cum += (i + 1) * Math.max(0, wealth[i]);
+    const gini = Math.max(0, Math.min(1, (2 * cum) / (n * total) - (n + 1) / n));
+    // decis (riqueza média por décimo)
+    const decis: number[] = [];
+    for (let d = 0; d < 10; d++) {
+      const a = Math.floor((d * n) / 10), b = Math.floor(((d + 1) * n) / 10);
+      let s = 0; for (let k = a; k < b; k++) s += wealth[k];
+      decis.push(b > a ? s / (b - a) : 0);
+    }
+    const pobreza = (wealth.filter((w) => w < 1500 * this.economy.priceLevel).length / n) * 100;
+
+    const nameOf = (id: number) => cold[id]?.name ?? '—';
+    const profOf = (id: number) => cold[id]?.professionTitle ?? '—';
+    const ricos = [...all].sort((a, b) => b.money - a.money).slice(0, 10)
+      .map((r) => ({ id: r.id, nome: nameOf(r.id), dinheiro: Math.round(r.money), profissao: profOf(r.id) }));
+    const famosos = [...all].filter((r) => r.fame > 1).sort((a, b) => b.fame - a.fame).slice(0, 10)
+      .map((r) => ({ id: r.id, nome: nameOf(r.id), fama: Math.round(r.fame), profissao: profOf(r.id) }));
+
+    // proprietários: nº de imóveis e valor total por dono-cidadão
+    const owned = new Map<number, { imoveis: number; valor: number }>();
+    for (const r of this.city.residences) {
+      if (r.ownerId < 0 || !hot.alive[r.ownerId]) continue;
+      const e = owned.get(r.ownerId) ?? { imoveis: 0, valor: 0 };
+      e.imoveis++;
+      e.valor += this.housing.valueOf(r.id) * this.economy.priceLevel;
+      owned.set(r.ownerId, e);
+    }
+    const proprietarios = [...owned.entries()]
+      .sort((a, b) => b[1].valor - a[1].valor).slice(0, 10)
+      .map(([id, e]) => ({ id, nome: nameOf(id), imoveis: e.imoveis, valor: Math.round(e.valor) }));
+
+    const faixas = ['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-89', '90+'];
+    const piramide = faixas.map((faixa, i) => ({ faixa, m: pm[i], f: pf[i] }));
+    return { gini, decis, pobreza, piramide, escolaridade, ricos, famosos, proprietarios };
+  }
+
+  /** Valores agregados por quarteirão para mapas de calor (alinhado a city.blocks). */
+  heatmapData(): HeatmapData {
+    const { hot } = this.world;
+    const N = CONFIG.CITY_BLOCKS;
+    const span = this.city.blockSpan;
+    const half = this.city.worldSize / 2;
+    const len = this.city.blocks.length;
+    const wSum = new Float64Array(len), hSum = new Float64Array(len), cSum = new Float64Array(len);
+    const cnt = new Uint32Array(len);
+    const blockOf = (x: number, z: number) => {
+      const bx = Math.min(N - 1, Math.max(0, Math.floor((x + half) / span)));
+      const bz = Math.min(N - 1, Math.max(0, Math.floor((z + half) / span)));
+      return bz * N + bx;
+    };
+    for (let i = 0; i < this.world.entityRange; i++) {
+      if (!hot.alive[i]) continue;
+      const idx = blockOf(hot.posX[i], hot.posZ[i]);
+      wSum[idx] += hot.money[i];
+      hSum[idx] += hot.happiness[i];
+      cSum[idx] += hot.criminalRecord[i];
+      cnt[idx]++;
+    }
+    const wealth = new Array(len).fill(0);
+    const happiness = new Array(len).fill(0);
+    const crime = new Array(len).fill(0);
+    for (let i = 0; i < len; i++) {
+      if (cnt[i] > 0) {
+        wealth[i] = wSum[i] / cnt[i];
+        happiness[i] = hSum[i] / cnt[i];
+        crime[i] = cSum[i]; // densidade de ficha criminal (soma)
+      }
+    }
+    // valor do solo por quarteirão (média das residências do bloco)
+    const landSum = new Float64Array(len), landCnt = new Uint32Array(len);
+    for (const r of this.city.residences) {
+      const idx = blockOf(r.x, r.z);
+      landSum[idx] += this.housing.valueOf(r.id) * this.economy.priceLevel;
+      landCnt[idx]++;
+    }
+    const land = new Array(len).fill(0);
+    for (let i = 0; i < len; i++) if (landCnt[i] > 0) land[i] = landSum[i] / landCnt[i];
+    return { wealth, happiness, crime, land };
   }
 
   /**

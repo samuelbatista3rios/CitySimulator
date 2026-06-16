@@ -11,6 +11,21 @@ import { randomHobby, assignReligion } from '../world/venues';
 
 const clamp = (v: number) => Math.max(0, Math.min(100, v));
 
+/**
+ * Idade realista por faixas (pirâmide etária): crianças, jovens, adultos e
+ * idosos. Antes a idade era ~normal(32,16), que quase não gerava crianças nem
+ * idosos. Agora a cidade tem todas as gerações.
+ */
+function realisticAge(rng: RNG): number {
+  const r = rng.next();
+  if (r < 0.20) return rng.range(1, 14);    // crianças — 20%
+  if (r < 0.36) return rng.range(15, 24);   // jovens — 16%
+  if (r < 0.62) return rng.range(25, 39);   // adultos jovens — 26%
+  if (r < 0.84) return rng.range(40, 59);   // adultos — 22%
+  if (r < 0.95) return rng.range(60, 74);   // idosos — 11%
+  return rng.range(75, 92);                  // longevos — 5%
+}
+
 function educationFor(rng: RNG, intelligence: number, ageYears: number): EducationLevel {
   if (ageYears < 15) return 'fundamental';
   if (ageYears < 18) return 'medio';
@@ -59,7 +74,7 @@ export function spawnCitizen(world: EcsWorld, rng: RNG, city: CityMap, residence
   const sex: Sex = rng.chance(0.5) ? 'M' : 'F';
   const personality = randomPersonality(rng);
   const intelligence = clamp(50 + rng.gaussian() * 16);
-  const ageYears = Math.max(1, Math.min(85, 32 + rng.gaussian() * 16));
+  const ageYears = realisticAge(rng);
   const skills = initialSkills(rng, intelligence);
   const cold = makeCold(randomName(rng, sex), sex, personality, educationFor(rng, intelligence, ageYears), skills);
   endowCulture(rng, cold);

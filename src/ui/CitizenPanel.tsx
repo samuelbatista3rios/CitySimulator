@@ -1,5 +1,51 @@
 import { useEffect } from 'react';
 import { useGenesis } from '../state/store';
+import type { CitizenDetail } from '../simulation/types';
+
+type Kin = { id: number; nome: string };
+
+/** Árvore genealógica em gerações: avós → pais → (você + irmãos) → filhos → netos. */
+function FamilyTree({ citizen, select }: { citizen: CitizenDetail; select: (id: number) => void }) {
+  const has =
+    citizen.avos.length || citizen.pais.length || citizen.irmaos.length ||
+    citizen.filhos.length || citizen.netos.length || citizen.conjuge;
+  if (!has) return <div className="muted">Sem família registrada</div>;
+
+  const Row = ({ label, people }: { label: string; people: Kin[] }) =>
+    people.length === 0 ? null : (
+      <div className="ft-row">
+        <span className="ft-label">{label}</span>
+        <div className="ft-people">
+          {people.map((k) => (
+            <button key={k.id} className="ft-chip" onClick={() => select(k.id)}>{k.nome}</button>
+          ))}
+        </div>
+      </div>
+    );
+
+  return (
+    <div className="family-tree">
+      <Row label="Avós" people={citizen.avos} />
+      <Row label="Pais" people={citizen.pais} />
+      <div className="ft-row ft-self">
+        <span className="ft-label">Você</span>
+        <div className="ft-people">
+          <span className="ft-chip ft-me">{citizen.nome}</span>
+          {citizen.conjuge && (
+            <button className="ft-chip ft-spouse" onClick={() => select(citizen.conjuge!.id)}>
+              💍 {citizen.conjuge.nome}
+            </button>
+          )}
+          {citizen.irmaos.map((k) => (
+            <button key={k.id} className="ft-chip" onClick={() => select(k.id)}>{k.nome}</button>
+          ))}
+        </div>
+      </div>
+      <Row label="Filhos" people={citizen.filhos} />
+      <Row label="Netos" people={citizen.netos} />
+    </div>
+  );
+}
 
 const GOAL_LABELS: Record<string, string> = {
   comprar_carro: '🚗 Comprar carro',
@@ -55,7 +101,9 @@ export function CitizenPanel() {
       <div className="badges">
         {citizen.prefeito && <span className="badge gov">Prefeito(a)</span>}
         {citizen.preso && <span className="badge jail">🚓 Preso</span>}
-        {citizen.criminoso && !citizen.preso && <span className="badge crime">Ficha criminal</span>}
+        {citizen.criminoso && !citizen.preso && (
+          <span className="badge crime">Ficha criminal{citizen.fichaCriminal > 0 ? ` (${citizen.fichaCriminal})` : ''}</span>
+        )}
         {citizen.contasAtrasadas > 0 && <span className="badge debt">{citizen.contasAtrasadas}m em atraso</span>}
       </div>
       <div className="subtitle">
@@ -64,7 +112,7 @@ export function CitizenPanel() {
       </div>
       <div className="subtitle">
         💵 $ {citizen.dinheiro.toLocaleString('pt-BR')} · {citizen.atividade}
-        {citizen.temCasaPropria && ' · 🏠'}{citizen.temCarro && ' · 🚗'}
+        {citizen.temCasaPropria && ` · 🏠${citizen.valorImovel ? ` $${citizen.valorImovel.toLocaleString('pt-BR')}` : ''}`}{citizen.temCarro && ' · 🚗'}
         {' · '}Escolaridade: {citizen.escolaridade}
       </div>
       <button
@@ -135,25 +183,8 @@ export function CitizenPanel() {
         </>
       )}
 
-      <h3>Árvore familiar</h3>
-      <div className="family">
-        {citizen.pais.length > 0 && (
-          <div>Pais: {citizen.pais.map((f) => (
-            <button key={f.id} className="link" onClick={() => select(f.id)}>{f.nome}</button>
-          ))}</div>
-        )}
-        {citizen.conjuge && (
-          <div>Cônjuge: <button className="link" onClick={() => select(citizen.conjuge!.id)}>{citizen.conjuge.nome}</button></div>
-        )}
-        {citizen.filhos.length > 0 && (
-          <div>Filhos: {citizen.filhos.map((f) => (
-            <button key={f.id} className="link" onClick={() => select(f.id)}>{f.nome}</button>
-          ))}</div>
-        )}
-        {citizen.pais.length === 0 && !citizen.conjuge && citizen.filhos.length === 0 && (
-          <div className="muted">Sem família registrada</div>
-        )}
-      </div>
+      <h3>Árvore genealógica</h3>
+      <FamilyTree citizen={citizen} select={select} />
 
       <h3>Amigos</h3>
       {citizen.amigos.length === 0 && <div className="muted">Nenhum amigo próximo</div>}

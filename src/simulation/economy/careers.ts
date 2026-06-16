@@ -65,6 +65,8 @@ export class CareerSystem {
     hot.jobLevel[id] = level;
     c.professionTitle = company.positions[level].title;
     c.jobHistory.push({ company: company.name, title: c.professionTitle, fromTick: tick, toTick: -1 });
+    // histórico cresce ao longo de décadas; mantém só os mais recentes (save enxuto)
+    if (c.jobHistory.length > 16) c.jobHistory.splice(0, c.jobHistory.length - 16);
     remember(c, tick, 'emprego', `Começou como ${c.professionTitle} na ${company.name}`);
     if (totalOpenings(company) === 0) this.rebuildHiringIndex();
   }

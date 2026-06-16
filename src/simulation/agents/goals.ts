@@ -32,8 +32,9 @@ export function updateGoals(id: number, hot: HotComponents, cold: ColdData, rng:
   if (!hot.ownsCar[id] && money > CONFIG.CAR_PRICE * 0.4) add('comprar_carro', 0.5 + amb * 0.2);
   if (!hot.ownsHouse[id] && money > CONFIG.HOUSE_PRICE * 0.2) add('comprar_casa', 0.6 + amb * 0.3);
   if (hot.partnerId[id] === -1 && age >= 20 && age <= 55 && rng.chance(0.4)) add('casar', 0.55);
-  if (!hot.isOwner[id] && amb > 0.62 && money > CONFIG.BUSINESS_STARTUP_COST * 0.5) {
-    add('abrir_empresa', 0.7 + amb * 0.3);
+  // Empreender é para os MUITO ambiciosos e capitalizados (evita "todo mundo dono")
+  if (!hot.isOwner[id] && amb > 0.8 && money > CONFIG.BUSINESS_STARTUP_COST * 1.3) {
+    add('abrir_empresa', 0.55 + amb * 0.3);
   }
   // Talento esportivo + juventude → sonha em virar atleta profissional
   if (age < 30 && cold.skills.esporte > 45 && !hot.isOwner[id]) {

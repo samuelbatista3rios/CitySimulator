@@ -9,6 +9,13 @@ import type { CareerSystem } from '../economy/careers';
 
 const DAYS_PER_YEAR = CONFIG.DAYS_PER_MONTH * CONFIG.MONTHS_PER_YEAR;
 
+/** Tipos de crime, do menos ao mais grave (afeta pena, captura e dano à vítima). */
+type CrimeKind = 'furto' | 'roubo' | 'fraude' | 'vandalismo';
+
+function violentLabel(kind: CrimeKind): string {
+  return kind === 'roubo' ? 'Cometeu um assalto' : 'Cometeu um furto';
+}
+
 /**
  * Instituições públicas e segurança:
  *  - HOSPITAIS: tratam cidadãos doentes (saúde baixa); capacidade × verba de saúde.
@@ -105,19 +112,51 @@ export class InstitutionSystem {
       if (!c) continue;
       // matrícula impulsiona inteligência (capital humano) e chance de avançar etapa
       hot.intelligence[i] = Math.min(100, hot.intelligence[i] + 0.15 * quality);
-      if (age >= 18 && c.education === 'medio' && this.rng.chance(0.03 * quality)) {
-        c.education = 'superior';
-        remember(c, tick, 'formatura', 'Concluiu o ensino superior');
+      if (age >= 18 && c.education === 'medio') {
+        // MOBILIDADE: filhos de famílias ricas avançam mais — mas ESCOLA BEM
+        // FINANCIADA neutraliza a vantagem (igualdade de oportunidade). Em escola
+        // sucateada, a origem familiar pesa muito; com boa verba, quase não pesa.
+        let parentWealth = 0;
+        for (const p of c.parents) parentWealth += hot.money[p] ?? 0;
+        parentWealth = c.parents.length ? parentWealth / c.parents.length : 3000;
+        const advantage = parentWealth > 20_000 ? 1.4 : parentWealth < 2000 ? 0.55 : 1;
+        const factor = 1 + (advantage - 1) * (1 - Math.min(1, gov.eduFunding));
+        if (this.rng.chance(0.03 * quality * factor)) {
+          c.education = 'superior';
+          remember(c, tick, 'formatura', 'Concluiu o ensino superior');
+        }
       }
     }
   }
 
-  /** Crime e polícia: autores, vítimas, prisões e reincidência. */
+  /**
+   * Crime e justiça: autores, vítimas, TIPOS de crime, REINCIDÊNCIA, JULGAMENTO
+   * (condenação/absolvição) e o efeito da DESIGUALDADE. A pobreza relativa
+   * (muita gente abaixo de ¼ da renda média) aquece o crime; reincidentes têm
+   * maior propensão e penas mais longas; ricos sem escrúpulos cometem FRAUDE
+   * (colarinho branco) contra o caixa público.
+   */
   private policing(tick: number, gov: Government): void {
     const { hot, cold } = this.world;
     const range = this.world.entityRange;
-    const catchRate = 0.25 + gov.policeFunding * 0.6; // 0.25..0.85
-    // taxa de crime base por habitante em risco neste mês
+    const catchBase = 0.2 + gov.policeFunding * 0.55; // eficiência policial
+
+    // desigualdade: pobreza relativa à renda média eleva a criminalidade
+    let adults = 0, wealthSum = 0;
+    for (let i = 0; i < range; i++) {
+      if (!hot.alive[i] || hot.inJail[i]) continue;
+      if (hot.ageDays[i] / DAYS_PER_YEAR < CONFIG.ADULT_AGE) continue;
+      adults++; wealthSum += hot.money[i];
+    }
+    const meanWealth = wealthSum / Math.max(1, adults);
+    let poor = 0;
+    for (let i = 0; i < range; i++) {
+      if (!hot.alive[i] || hot.inJail[i]) continue;
+      if (hot.ageDays[i] / DAYS_PER_YEAR < CONFIG.ADULT_AGE) continue;
+      if (hot.money[i] < meanWealth * 0.25) poor++;
+    }
+    const inequalityMult = 1 + poor / Math.max(1, adults); // 1..2
+
     for (let i = 0; i < range; i++) {
       if (!hot.alive[i] || hot.inJail[i]) continue;
       const c = cold[i];
@@ -125,54 +164,106 @@ export class InstitutionSystem {
       const age = hot.ageDays[i] / DAYS_PER_YEAR;
       if (age < CONFIG.ADULT_AGE) continue;
 
-      // propensão ao crime: pobreza + desemprego + infelicidade + baixa amabilidade.
-      // Acúmulo de fatores (não é "todo desempregado vira criminoso"), com uma
-      // base pequena para haver criminalidade realista mesmo em tempos bons.
       const broke = hot.money[i] < 400 ? 1 : hot.money[i] < 1500 ? 0.5 : 0;
       const jobless = hot.companyId[i] === -1 && !hot.isOwner[i] ? 1 : 0;
       const unhappy = hot.happiness[i] < 30 ? 1 : 0;
       const meanness = (100 - c.personality.amabilidade) / 100;
+      const rich = hot.money[i] > 50_000 ? 1 : 0;
       const factor = broke * 0.4 + jobless * 0.2 + unhappy * 0.2 + meanness * 0.2;
-      const propensity = Math.max(0, factor - 0.28) * 0.03; // limiar + taxa baixa
+      let propensity = Math.max(0, factor - 0.28) * 0.03;
+      // tentação de colarinho branco: rico, pouco escrupuloso, com caixa público gordo
+      const fraudUrge = rich && meanness > 0.55 && gov.budget > 0 ? 0.015 * meanness : 0;
+      propensity += fraudUrge;
+      propensity *= inequalityMult;
+      propensity *= 1 + Math.min(4, hot.criminalRecord[i]) * 0.25; // reincidência
       if (!this.rng.chance(propensity)) continue;
 
-      // comete um crime contra uma vítima aleatória (furto)
+      // escolhe o TIPO de crime conforme o perfil
+      const kind = this.chooseCrime(i, broke, rich, meanness, fraudUrge > 0);
       this.crimesThisYear++;
-      const victim = this.rng.int(0, range - 1);
-      let loot = 0;
-      if (hot.alive[victim] && victim !== i && hot.money[victim] > 100) {
-        loot = Math.min(hot.money[victim] * 0.3, 4000);
-        hot.money[victim] -= loot;
-        hot.money[i] += loot;
-        hot.safety[victim] = Math.max(0, hot.safety[victim] - 20);
-        hot.happiness[victim] = Math.max(0, hot.happiness[victim] - 8);
-        const cv = cold[victim];
-        if (cv) remember(cv, tick, 'conflito', 'Foi vítima de um furto');
-      }
-      remember(c, tick, 'conflito', 'Cometeu um crime');
+      this.commitCrime(i, kind, tick, gov);
 
-      // polícia prende?
+      // PRISÃO requer flagrante/investigação + JULGAMENTO (condenação)
+      const catchRate = catchBase * (kind === 'fraude' ? 0.5 : kind === 'vandalismo' ? 0.7 : 1);
       if (this.rng.chance(catchRate)) {
-        this.arrest(i, tick);
-        if (this.rng.chance(0.04)) {
-          this.feed({ tick, kind: 'social', text: `🚓 ${c.name} foi preso(a) por furto` });
+        const convictionOdds = 0.5 + gov.policeFunding * 0.3 + Math.min(4, hot.criminalRecord[i]) * 0.05;
+        if (this.rng.chance(convictionOdds)) {
+          this.arrest(i, tick, kind);
+        } else if (this.rng.chance(0.03)) {
+          this.feed({ tick, kind: 'social', text: `⚖️ ${c.name} foi absolvido(a) por falta de provas` });
         }
       }
     }
   }
 
-  private arrest(id: number, tick: number): void {
+  private chooseCrime(
+    id: number, broke: number, rich: number, meanness: number, fraudPossible: boolean,
+  ): CrimeKind {
+    if (fraudPossible && this.rng.chance(0.6)) return 'fraude';
+    if (broke >= 1 && this.rng.chance(0.45)) return 'roubo'; // desespero → violência
+    if (meanness > 0.6 && rich === 0 && this.rng.chance(0.25)) return 'vandalismo';
+    return 'furto';
+  }
+
+  /** Aplica os efeitos do crime conforme o tipo (loot, vítima, caixa público). */
+  private commitCrime(id: number, kind: CrimeKind, tick: number, gov: Government): void {
+    const { hot, cold } = this.world;
+    const range = this.world.entityRange;
+    const c = cold[id]!;
+    if (kind === 'fraude') {
+      // colarinho branco: desvia do caixa público (corrupção)
+      const loot = Math.min(gov.budget * 0.02, 5000 + hot.money[id] * 0.05);
+      if (loot > 0) { gov.budget -= loot; hot.money[id] += loot; }
+      remember(c, tick, 'conflito', 'Cometeu fraude contra o erário');
+      if (this.rng.chance(0.05)) this.feed({ tick, kind: 'social', text: `💼 Esquema de corrupção desviou recursos públicos` });
+      return;
+    }
+    if (kind === 'vandalismo') {
+      // sem vítima direta: abala a sensação de segurança da vizinhança
+      for (let k = 0; k < 4; k++) {
+        const v = this.rng.int(0, range - 1);
+        if (hot.alive[v]) hot.safety[v] = Math.max(0, hot.safety[v] - 8);
+      }
+      remember(c, tick, 'conflito', 'Cometeu vandalismo');
+      return;
+    }
+    // furto / roubo: contra uma vítima
+    const victim = this.rng.int(0, range - 1);
+    if (hot.alive[victim] && victim !== id && hot.money[victim] > 100) {
+      const violent = kind === 'roubo';
+      const loot = Math.min(hot.money[victim] * (violent ? 0.5 : 0.3), violent ? 8000 : 4000);
+      hot.money[victim] -= loot;
+      hot.money[id] += loot;
+      hot.safety[victim] = Math.max(0, hot.safety[victim] - (violent ? 30 : 20));
+      hot.happiness[victim] = Math.max(0, hot.happiness[victim] - (violent ? 12 : 8));
+      if (violent) hot.health[victim] = Math.max(0, hot.health[victim] - 12); // violência fere
+      const cv = cold[victim];
+      if (cv) remember(cv, tick, 'conflito', violent ? 'Foi vítima de um assalto' : 'Foi vítima de um furto');
+    }
+    remember(c, tick, 'conflito', violentLabel(kind));
+  }
+
+  private arrest(id: number, tick: number, kind: CrimeKind): void {
     const { hot, cold } = this.world;
     if (hot.companyId[id] !== -1) this.careers.fire(id, tick, 'preso');
     hot.inJail[id] = 1;
     hot.building[id] = -3; // cadeia (culled do render de rua)
-    const months = this.rng.int(1, 4); // penas mais curtas (evita superlotação)
+    hot.criminalRecord[id] = Math.min(255, hot.criminalRecord[id] + 1); // condenação
+    // pena por gravidade + agravante de reincidência
+    const base: Record<CrimeKind, [number, number]> = {
+      furto: [1, 3], vandalismo: [1, 2], fraude: [3, 6], roubo: [4, 8],
+    };
+    const [lo, hi] = base[kind];
+    const months = this.rng.int(lo, hi) + Math.min(6, hot.criminalRecord[id] - 1);
     hot.jailUntil[id] = tick + months * TICKS_PER_MONTH;
     hot.happiness[id] = Math.max(0, hot.happiness[id] - 15);
     this.arrestsThisYear++;
     this.jailedCount++;
     const c = cold[id];
-    if (c) remember(c, tick, 'conflito', `Foi preso(a) por ${months} meses`);
+    if (c) remember(c, tick, 'conflito', `Condenado(a) por ${kind} a ${months} meses`);
+    if (this.rng.chance(0.04)) {
+      this.feed({ tick, kind: 'social', text: `🚓 ${c?.name ?? 'Alguém'} foi condenado(a) por ${kind}` });
+    }
   }
 
   private releaseFromJail(tick: number): void {

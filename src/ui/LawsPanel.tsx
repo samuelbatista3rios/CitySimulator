@@ -44,12 +44,39 @@ export function LawsPanel() {
       </div>
       <p className="law-desc">{info.desc}</p>
 
+      {eleito && (
+        <div className="approval">
+          <div className="approval-head">
+            <span>Aprovação da gestão</span>
+            <strong>{stats!.aprovacao.toFixed(0)}%</strong>
+          </div>
+          <div className="approval-bar">
+            <div
+              className="approval-fill"
+              style={{
+                width: `${stats!.aprovacao}%`,
+                background: stats!.aprovacao >= 50 ? '#6fdc8c' : stats!.aprovacao < 30 ? '#ff7b7b' : '#e1a95b',
+              }}
+            />
+          </div>
+          <span className="muted">Abaixo de 25% por um ano → eleição de recall.</span>
+        </div>
+      )}
+
       <h3>Legislação atual</h3>
       <table className="law-table">
         <tbody>
           <tr>
-            <td>Imposto sobre a folha</td>
+            <td>Imposto de renda (topo)</td>
             <td>{stats ? `${stats.imposto.toFixed(0)}%` : '—'}</td>
+          </tr>
+          <tr>
+            <td>Imposto corporativo</td>
+            <td>{stats ? `${stats.impostoCorporativo.toFixed(0)}%` : '—'}</td>
+          </tr>
+          <tr>
+            <td>IPTU (mensal)</td>
+            <td>{stats ? `${stats.impostoPropriedade.toFixed(2)}%` : '—'}</td>
           </tr>
           <tr>
             <td>Salário mínimo</td>
@@ -68,15 +95,40 @@ export function LawsPanel() {
             <td>{stats ? fmtMoney(stats.orcamentoPublico) : '—'}</td>
           </tr>
           <tr>
+            <td>Dívida pública</td>
+            <td>{stats ? fmtMoney(stats.dividaPublica) : '—'}</td>
+          </tr>
+          <tr>
+            <td>Juros da dívida (mês)</td>
+            <td>{stats ? fmtMoney(stats.jurosDivida) : '—'}</td>
+          </tr>
+          {stats?.austeridade && (
+            <tr>
+              <td>Regime fiscal</td>
+              <td style={{ color: '#ff7b7b' }}>Austeridade (cortes)</td>
+            </tr>
+          )}
+          <tr>
             <td>Próxima eleição</td>
             <td>{stats ? `em ${stats.proximaEleicaoAnos.toFixed(1)} anos` : '—'}</td>
           </tr>
         </tbody>
       </table>
 
+      <h3>Arrecadação do mês</h3>
+      <table className="law-table">
+        <tbody>
+          <tr><td>Imposto de renda</td><td>{stats ? fmtMoney(stats.arrecadacaoIR) : '—'}</td></tr>
+          <tr><td>Imposto corporativo</td><td>{stats ? fmtMoney(stats.arrecadacaoCorp) : '—'}</td></tr>
+          <tr><td>IPTU</td><td>{stats ? fmtMoney(stats.arrecadacaoIPTU) : '—'}</td></tr>
+        </tbody>
+      </table>
+
       <h3>O que as leis afetam</h3>
       <ul className="law-effects">
-        <li>💼 <strong>Imposto</strong> — desconta o salário e abastece o orçamento público.</li>
+        <li>💼 <strong>IR progressivo</strong> — quem ganha mais paga alíquota maior; abastece o caixa.</li>
+        <li>🏢 <strong>Imposto corporativo</strong> — incide sobre o lucro das empresas.</li>
+        <li>🏠 <strong>IPTU</strong> — proprietários pagam sobre o valor do imóvel.</li>
         <li>💵 <strong>Salário mínimo</strong> — piso pago a todo trabalhador.</li>
         <li>🏛️ <strong>Orçamento</strong> — gasto em segurança, saúde, educação e bolsa de renda.</li>
         <li>🗳️ A cada 4 anos a população <strong>vota</strong> e pode trocar as leis.</li>

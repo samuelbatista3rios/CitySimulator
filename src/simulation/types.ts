@@ -111,6 +111,17 @@ export interface JobPosition {
   level: number; // 0 = júnior ... 3 = diretor
 }
 
+export interface CompanyPositionView {
+  title: string;
+  salary: number; // salário já ajustado pelo nível salarial atual da economia
+  minSkill: number;
+  filled: number; // funcionários nesse cargo
+  open: number; // vagas abertas nesse cargo
+}
+
+/** Critério de ordenação do ranking de empresas. */
+export type CompanySort = 'capital' | 'receita' | 'recentes';
+
 export interface CompanyView {
   id: number;
   name: string;
@@ -119,6 +130,16 @@ export interface CompanyView {
   employees: number;
   openPositions: number;
   bankrupt: boolean;
+  // Detalhes (exibidos ao expandir a empresa)
+  ownerName: string | null; // dono-cidadão (ou null = corporação)
+  revenue: number; // receita do último mês
+  dividends: number; // dividendos pagos ao dono no último mês
+  productivity: number; // produtividade efetiva (equipe × tecnologia)
+  price: number; // preço relativo ao de referência do setor (1 = referência)
+  techLevel: number; // nível tecnológico (≥1) acumulado via P&D
+  foundedYear: number; // ano simulado de fundação
+  avgSalary: number; // folha média por funcionário (ajustada)
+  positions: CompanyPositionView[];
 }
 
 export type GlobalEventKind =
@@ -147,6 +168,9 @@ export interface CityStats {
   desemprego: number; // %
   empresas: number;
   empresasFalidas: number;
+  consumoFamilias: number; // gasto de consumo das famílias no mês (vira receita)
+  dividendos: number; // dividendos pagos aos donos no mês
+  investimentoPED: number; // investimento das empresas em P&D no mês
   criminalidade: number; // índice 0..100
   felicidadeMedia: number;
   educacaoMedia: number;
@@ -156,14 +180,24 @@ export interface CityStats {
   nascimentosAno: number;
   mortesAno: number;
   casamentosAno: number;
+  expectativaVida: number; // idade média ao falecer (anos)
   eventoAtivo: string | null;
   fps: number; // ticks/s reais do worker
   // Governo & leis
   prefeito: string | null;
   plataforma: string | null;
-  imposto: number; // %
+  aprovacao: number; // 0..100 — aprovação do prefeito
+  imposto: number; // % — topo do imposto de renda progressivo
+  impostoCorporativo: number; // % sobre o lucro das empresas
+  impostoPropriedade: number; // % mensal (IPTU)
+  arrecadacaoIR: number; // arrecadação do mês — imposto de renda
+  arrecadacaoCorp: number; // arrecadação do mês — imposto corporativo
+  arrecadacaoIPTU: number; // arrecadação do mês — IPTU
   salarioMinimo: number;
   orcamentoPublico: number;
+  dividaPublica: number; // dívida soberana acumulada
+  jurosDivida: number; // serviço da dívida (juros) no mês
+  austeridade: boolean; // governo em corte de gastos por dívida alta
   proximaEleicaoAnos: number;
   // Instituições
   crimesAno: number;
@@ -183,6 +217,10 @@ export interface CityStats {
   // Finanças
   inadimplencia: number; // % da população com contas atrasadas
   scoreCreditoMedio: number;
+  // Imobiliário
+  indiceImobiliario: number; // índice de preços reais (1 = base)
+  precoMedioImovel: number; // preço médio efetivo do imóvel
+  taxaProprietarios: number; // % de adultos com casa própria
 }
 
 export type InstitutionKind = 'hospital' | 'escola' | 'delegacia' | 'prefeitura';
@@ -227,16 +265,21 @@ export interface CitizenDetail {
   objetivos: Goal[];
   amigos: { id: number; nome: string; forca: number }[];
   conjuge: { id: number; nome: string } | null;
+  avos: { id: number; nome: string }[];
   pais: { id: number; nome: string }[];
+  irmaos: { id: number; nome: string }[];
   filhos: { id: number; nome: string }[];
+  netos: { id: number; nome: string }[];
   memorias: MemoryEvent[];
   temCasaPropria: boolean;
+  valorImovel: number | null; // valor de mercado do imóvel (se proprietário)
   temCarro: boolean;
   planoAtual: string[];
   // Cidadania
   prefeito: boolean;
   preso: boolean;
   criminoso: boolean;
+  fichaCriminal: number; // nº de condenações
   scoreCredito: number;
   emprestimos: LoanView[];
   contasAtrasadas: number;
@@ -251,7 +294,7 @@ export interface FeedItem {
 // ---------- Mensagens worker <-> UI ----------
 
 export interface CityLayoutMsg {
-  blocks: { x: number; z: number; zone: string }[];
+  blocks: { x: number; z: number; zone: string; elevation: number }[];
   buildings: {
     id: number;
     x: number;
@@ -260,11 +303,15 @@ export interface CityLayoutMsg {
     d: number;
     h: number;
     zone: string;
+    elevation: number;
   }[];
   institutions: InstitutionMarker[];
   venues: VenueMarker[];
   worldSize: number;
   blockSpan: number;
+  stadium: { x: number; z: number } | null;
+  nobleCenter: { x: number; z: number } | null;
+  boemioCenter: { x: number; z: number } | null;
 }
 
 export interface CitizenSearchResult {
@@ -272,6 +319,26 @@ export interface CitizenSearchResult {
   nome: string;
   idade: number;
   profissao: string;
+}
+
+/** Dados de distribuição/desigualdade e rankings (painel de monitoramento). */
+export interface MonitorData {
+  gini: number; // 0..1 — desigualdade de riqueza
+  decis: number[]; // riqueza média por decil (10 valores)
+  pobreza: number; // % de adultos abaixo da linha de subsistência
+  piramide: { faixa: string; m: number; f: number }[]; // pirâmide etária por década
+  escolaridade: { fundamental: number; medio: number; superior: number; pos: number };
+  ricos: { id: number; nome: string; dinheiro: number; profissao: string }[];
+  famosos: { id: number; nome: string; fama: number; profissao: string }[];
+  proprietarios: { id: number; nome: string; imoveis: number; valor: number }[];
+}
+
+/** Valores por quarteirão (alinhados a layout.blocks) para mapas de calor. */
+export interface HeatmapData {
+  wealth: number[];
+  happiness: number[];
+  crime: number[];
+  land: number[];
 }
 
 export type WorkerOut =
@@ -291,6 +358,8 @@ export type WorkerOut =
   | { type: 'saved'; payload: string }
   | { type: 'companies'; companies: CompanyView[] }
   | { type: 'searchResults'; results: CitizenSearchResult[] }
+  | { type: 'monitor'; data: MonitorData }
+  | { type: 'heatmap'; data: HeatmapData }
   | { type: 'follow'; id: number; x: number; z: number };
 
 export type WorkerIn =
@@ -301,6 +370,8 @@ export type WorkerIn =
   | { type: 'getCitizen'; id: number }
   | { type: 'save' }
   | { type: 'load'; payload: string }
-  | { type: 'getCompanies' }
+  | { type: 'getCompanies'; sort?: CompanySort }
   | { type: 'search'; query: string }
+  | { type: 'getMonitor' }
+  | { type: 'getHeatmap' }
   | { type: 'followCitizen'; id: number };

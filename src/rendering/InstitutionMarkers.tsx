@@ -30,6 +30,16 @@ export function InstitutionMarkers() {
           <div className="inst-marker" title={m.kind}>{ICON[m.kind]}</div>
         </Html>
       ))}
+      {layout.nobleCenter && (
+        <Html position={[layout.nobleCenter.x, 22, layout.nobleCenter.z]} center distanceFactor={150} zIndexRange={[10, 0]}>
+          <div className="inst-marker noble-marker" title="Bairro Nobre">💎</div>
+        </Html>
+      )}
+      {layout.boemioCenter && (
+        <Html position={[layout.boemioCenter.x, 20, layout.boemioCenter.z]} center distanceFactor={150} zIndexRange={[10, 0]}>
+          <div className="inst-marker" title="Bairro Boêmio / Cultural">🎭</div>
+        </Html>
+      )}
     </group>
   );
 }

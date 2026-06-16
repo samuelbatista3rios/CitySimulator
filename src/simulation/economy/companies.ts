@@ -20,6 +20,20 @@ export interface Company {
   employees: Set<number>;
   bankrupt: boolean;
   revenueThisMonth: number;
+  /** dividendos pagos ao dono no último mês */
+  dividendsThisMonth: number;
+  /** produtividade efetiva no último mês (equipe × tecnologia) */
+  lastProductivity: number;
+  /** preço relativo ao de referência do setor (1 = referência; >1 premium) */
+  price: number;
+  /** direção atual do ajuste de preço (hill-climb por lucro): +1 ou −1 */
+  priceTrend: number;
+  /** lucro do mês anterior — base da estratégia de preço */
+  lastProfit: number;
+  /** estoque de P&D acumulado (investimento em inovação) */
+  rnd: number;
+  /** nível tecnológico: multiplicador de produtividade (≥1) ganho via P&D */
+  techLevel: number;
   foundedTick: number;
 }
 
@@ -45,6 +59,7 @@ const ZONE_SECTORS: Record<string, Sector[]> = {
   centro: ['tecnologia', 'servicos', 'comercio'],
   comercial: ['comercio', 'servicos', 'cultura'],
   industrial: ['industria', 'industria', 'tecnologia'],
+  boemio: ['cultura', 'cultura', 'servicos', 'comercio'], // polo cultural
 };
 
 export function makePositions(rng: RNG, sector: Sector, wageMultiplier: number): JobPosition[] {
@@ -83,26 +98,39 @@ export function createCompany(
     employees: new Set(),
     bankrupt: false,
     revenueThisMonth: 0,
+    dividendsThisMonth: 0,
+    lastProductivity: 1,
+    price: rng.range(0.92, 1.08),
+    priceTrend: rng.chance(0.5) ? 1 : -1,
+    lastProfit: 0,
+    rnd: 0,
+    techLevel: 1,
     foundedTick: tick,
   };
 }
 
-/** Gera as 2.000 empresas iniciais nos prédios comerciais/industriais/centro. */
-export function generateCompanies(rng: RNG, city: CityMap): Company[] {
+/**
+ * Gera as empresas iniciais. O total é DIMENSIONADO À POPULAÇÃO (~1 empresa por
+ * 14 habitantes) para que haja mão de obra suficiente — antes eram sempre 2.000,
+ * o que deixava muitas empresas com vagas abertas e sem trabalhadores.
+ */
+export function generateCompanies(rng: RNG, city: CityMap, population: number): Company[] {
   const companies: Company[] = [];
   const pools: Building[] = [
     ...(city.byZone.get('centro') ?? []),
     ...(city.byZone.get('comercial') ?? []),
     ...(city.byZone.get('industrial') ?? []),
+    ...(city.byZone.get('boemio') ?? []),
   ];
+  const target = Math.min(CONFIG.START_COMPANIES, Math.ceil(population / 12));
   let cid = 0;
   outer: for (let round = 0; round < 60; round++) {
     for (const bld of pools) {
       if (round >= bld.capacity) continue;
-      if (cid >= CONFIG.START_COMPANIES) break outer;
+      if (cid >= target) break outer;
       const sectors = ZONE_SECTORS[bld.zone] ?? (['servicos'] as Sector[]);
       const sector = rng.pick(sectors);
-      const size = bld.zone === 'centro' ? rng.int(8, 40) : rng.int(2, 12);
+      const size = bld.zone === 'centro' ? rng.int(6, 22) : rng.int(2, 8);
       companies.push(createCompany(rng, cid++, bld, sector, size, 0));
     }
   }

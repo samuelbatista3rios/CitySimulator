@@ -2,33 +2,64 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import { useGenesis } from '../state/store';
 
-const ZONE_COLORS: Record<string, string> = {
+/** Cor do terraço de cada zona. */
+const ZONE_GROUND: Record<string, string> = {
   parque: '#3a7d44',
-  lago: '#2a6f97',
+  nobre: '#4f6b4a',
+  boemio: '#6b5a7a',
+  // construído (centro/comercial/industrial/residencial) usa o cinza padrão
 };
+const BUILT = '#56565e';
 
-/** Chão, malha viária (ruas + avenidas), parques e lagos. */
+/**
+ * Chão com RELEVO: cada quarteirão (exceto lago) é um terraço cuja altura segue
+ * a elevação do terreno — dá topografia à cidade. As ruas (asfalto) ficam no
+ * nível base; lagos são água rasa. Tudo num único InstancedMesh por desempenho.
+ */
 export function Ground() {
   const layout = useGenesis((s) => s.layout);
 
-  const { parkMatrices, lakeMatrices, roadGeometry } = useMemo(() => {
-    if (!layout) return { parkMatrices: [], lakeMatrices: [], roadGeometry: null };
-    const parks: THREE.Matrix4[] = [];
-    const lakes: THREE.Matrix4[] = [];
+  const terrain = useMemo(() => {
+    if (!layout) return null;
+    const built = layout.blocks.filter((b) => b.zone !== 'lago');
+    const size = layout.blockSpan - 2.8;
+    const geo = new THREE.BoxGeometry(size, 1, size); // altura 1, escalada por instância
+    const mat = new THREE.MeshStandardMaterial({ roughness: 0.95 });
+    const im = new THREE.InstancedMesh(geo, mat, Math.max(1, built.length));
     const m = new THREE.Matrix4();
-    for (const b of layout.blocks) {
-      if (b.zone === 'parque') {
-        parks.push(m.clone().makeTranslation(b.x, 0.02, b.z));
-      } else if (b.zone === 'lago') {
-        lakes.push(m.clone().makeTranslation(b.x, 0.01, b.z));
-      }
-    }
-    return { parkMatrices: parks, lakeMatrices: lakes, roadGeometry: null };
+    const p = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const col = new THREE.Color();
+    const high = new THREE.Color('#cdbb9a'); // topos: tom terroso claro (relevo legível de cima)
+    const maxElev = Math.max(1, ...built.map((b) => b.elevation ?? 0));
+    built.forEach((b, i) => {
+      const e = b.elevation ?? 0;
+      const hgt = Math.max(0.16, e + 0.16);
+      p.set(b.x, hgt / 2, b.z);
+      s.set(1, hgt, 1);
+      m.compose(p, q, s);
+      im.setMatrixAt(i, m);
+      // tinge a cor da zona em direção ao tom de "topo" conforme a altura
+      col.set(ZONE_GROUND[b.zone] ?? BUILT).lerp(high, Math.min(1, e / maxElev) * 0.7);
+      im.setColorAt(i, col);
+    });
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    im.receiveShadow = true;
+    return im;
   }, [layout]);
 
-  if (!layout) return null;
+  const lakeMatrices = useMemo(() => {
+    if (!layout) return [] as THREE.Matrix4[];
+    const m = new THREE.Matrix4();
+    return layout.blocks
+      .filter((b) => b.zone === 'lago')
+      .map((b) => m.clone().makeTranslation(b.x, 0.06, b.z));
+  }, [layout]);
+
+  if (!layout || !terrain) return null;
   const size = layout.worldSize;
-  const blockSize = layout.blockSpan - 4; // BLOCK_SIZE
 
   return (
     <group>
@@ -37,54 +68,23 @@ export function Ground() {
         <planeGeometry args={[size + 60, size + 60]} />
         <meshStandardMaterial color="#2b2b30" />
       </mesh>
-      {/* calçadas dos quarteirões */}
-      <BlockPads layout={layout} blockSize={blockSize} />
-      {/* parques */}
-      <Instanced matrices={parkMatrices} color={ZONE_COLORS.parque} size={blockSize} height={0.25} />
+      {/* terraços dos quarteirões (com relevo) */}
+      <primitive object={terrain} />
       {/* lagos */}
-      <Instanced matrices={lakeMatrices} color={ZONE_COLORS.lago} size={layout.blockSpan} height={0.12} metal />
+      <LakeInstanced matrices={lakeMatrices} size={layout.blockSpan} />
     </group>
   );
 }
 
-function BlockPads({ layout, blockSize }: { layout: NonNullable<ReturnType<typeof useGenesis.getState>['layout']>; blockSize: number }) {
-  const matrices = useMemo(() => {
-    const out: THREE.Matrix4[] = [];
-    const m = new THREE.Matrix4();
-    for (const b of layout.blocks) {
-      if (b.zone === 'lago' || b.zone === 'parque') continue;
-      out.push(m.clone().makeTranslation(b.x, 0.05, b.z));
-    }
-    return out;
-  }, [layout]);
-  return <Instanced matrices={matrices} color="#56565e" size={blockSize + 1.2} height={0.1} />;
-}
-
-function Instanced({
-  matrices,
-  color,
-  size,
-  height,
-  metal = false,
-}: {
-  matrices: THREE.Matrix4[];
-  color: string;
-  size: number;
-  height: number;
-  metal?: boolean;
-}) {
+function LakeInstanced({ matrices, size }: { matrices: THREE.Matrix4[]; size: number }) {
   const mesh = useMemo(() => {
-    const geo = new THREE.BoxGeometry(size, height, size);
-    const mat = new THREE.MeshStandardMaterial({
-      color,
-      roughness: metal ? 0.15 : 0.95,
-      metalness: metal ? 0.6 : 0,
-    });
+    const geo = new THREE.BoxGeometry(size, 0.12, size);
+    const mat = new THREE.MeshStandardMaterial({ color: '#2a6f97', roughness: 0.15, metalness: 0.6 });
     const im = new THREE.InstancedMesh(geo, mat, Math.max(1, matrices.length));
     matrices.forEach((m, i) => im.setMatrixAt(i, m));
     im.count = matrices.length;
     im.instanceMatrix.needsUpdate = true;
     return im;
-  }, [matrices, color, size, height, metal]);
+  }, [matrices, size]);
   return <primitive object={mesh} />;
 }
