@@ -75,7 +75,7 @@ interface GenesisState {
   /** id do cidadão que a câmera está seguindo (lido pelo render loop) */
   followId: number | null;
   /** painel ativo no modo celular (abas inferiores); null = só o mapa */
-  mobilePanel: 'stats' | 'laws' | 'empresas' | 'busca' | null;
+  mobilePanel: 'stats' | 'laws' | 'empresas' | 'busca' | 'monitor' | null;
 
   boot: (seed?: number, population?: number) => void;
   send: (msg: WorkerIn) => void;
@@ -98,7 +98,7 @@ interface GenesisState {
   clearSearch: () => void;
   follow: (id: number) => void;
   stopFollow: () => void;
-  openMobilePanel: (p: 'stats' | 'laws' | 'empresas' | 'busca') => void;
+  openMobilePanel: (p: 'stats' | 'laws' | 'empresas' | 'busca' | 'monitor') => void;
 }
 
 /** Decodifica um frame binário vindo do servidor (WebSocket) em FrameData. */
@@ -292,10 +292,12 @@ export const useGenesis = create<GenesisState>((set, get) => ({
   openMobilePanel: (p) => {
     const next = get().mobilePanel === p ? null : p;
     if (next === 'empresas') get().send({ type: 'getCompanies', sort: get().companySort });
+    if (next === 'monitor') get().send({ type: 'getMonitor' });
     set({
       mobilePanel: next,
       showLaws: next === 'laws',
       showCompanies: next === 'empresas',
+      showMonitor: next === 'monitor',
     });
   },
 }));

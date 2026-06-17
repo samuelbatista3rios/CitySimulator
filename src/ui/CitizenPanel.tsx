@@ -106,6 +106,12 @@ export function CitizenPanel() {
         )}
         {citizen.contasAtrasadas > 0 && <span className="badge debt">{citizen.contasAtrasadas}m em atraso</span>}
       </div>
+      {citizen.preso && citizen.motivoPrisao && (
+        <div className="jail-reason">🔒 Motivo da prisão: {citizen.motivoPrisao}</div>
+      )}
+      {!citizen.preso && citizen.ultimoCrime && (
+        <div className="jail-reason muted">⚖️ Última condenação: {citizen.ultimoCrime}</div>
+      )}
       <div className="subtitle">
         {citizen.sexo === 'M' ? 'Homem' : 'Mulher'}, {citizen.idade} anos · {citizen.profissao}
         {citizen.empresa && <> · {citizen.empresa}</>}
@@ -162,10 +168,39 @@ export function CitizenPanel() {
       <Bar label="Amabilidade" value={Math.round(p.amabilidade)} />
       <Bar label="Neuroticismo" value={Math.round(p.neuroticismo)} />
 
+      {citizen.desempenho !== null && citizen.requisitos && (
+        <>
+          <h3>Desempenho no cargo</h3>
+          <Bar label="Aptidão para a função" value={citizen.desempenho} />
+          <div className="subtitle muted">
+            {citizen.desempenho >= 75 ? '⭐ Destaque — habilidades muito acima do exigido'
+              : citizen.desempenho >= 50 ? '👍 Bom encaixe no cargo'
+              : citizen.desempenho >= 30 ? '➖ Cumpre o mínimo, mas patina'
+              : '⚠️ Mal alinhado — rende abaixo do esperado'}
+          </div>
+          <div className="subtitle muted">
+            Exige: {citizen.requisitos.skill} ≥ {citizen.requisitos.min}
+            {citizen.requisitos.secondary && <> · {citizen.requisitos.secondary} ≥ {citizen.requisitos.minSecondary}</>}
+          </div>
+        </>
+      )}
+
       <h3>Habilidades</h3>
-      {Object.entries(citizen.habilidades).map(([k, v]) => (
-        <Bar key={k} label={k} value={v} />
-      ))}
+      {Object.entries(citizen.habilidades).map(([k, v]) => {
+        const req = citizen.requisitos;
+        const isPrimary = req?.skill === k;
+        const isSecondary = req?.secondary === k;
+        const destaque = isPrimary || isSecondary;
+        const min = isPrimary ? req!.min : isSecondary ? (req!.minSecondary ?? 0) : 0;
+        return (
+          <div key={k} className={destaque ? 'skill-req' : ''}>
+            <Bar
+              label={`${destaque ? '🎯 ' : ''}${k}${destaque ? ` (cargo: ≥${min})` : ''}`}
+              value={v}
+            />
+          </div>
+        );
+      })}
 
       <h3>Objetivos</h3>
       {citizen.objetivos.length === 0 && <div className="muted">Sem objetivos no momento</div>}

@@ -1,9 +1,39 @@
+import { CONFIG } from '../config';
 import type { EcsWorld } from '../ecs/world';
 import type { RNG } from '../rng';
-import type { FeedItem } from '../types';
+import type { FeedItem, JobPosition, SkillName } from '../types';
+import { SKILL_NAMES } from '../types';
+import type { ColdData } from '../ecs/components';
 import { remember } from '../agents/memory';
-import { bestSkill } from '../agents/skills';
+import { bestSkill, practiceSkill } from '../agents/skills';
 import { sectorSkill, totalOpenings, type Company } from './companies';
+
+const DAYS_PER_YEAR = CONFIG.DAYS_PER_MONTH * CONFIG.MONTHS_PER_YEAR;
+
+/** Candidato atende aos requisitos (habilidade principal + secundária) do cargo? */
+export function meetsRequirements(cold: ColdData, pos: JobPosition): boolean {
+  if (cold.skills[pos.skill] < pos.minSkill) return false;
+  if (pos.secondarySkill && cold.skills[pos.secondarySkill] < (pos.minSecondary ?? 0)) return false;
+  return true;
+}
+
+/**
+ * Desempenho no cargo 0..100: quão alinhadas estão as habilidades do cidadão às
+ * exigidas pela função (principal + secundária). É isso que diz se alguém "vai
+ * bem ou mal" naquele emprego — um Tech Lead com ótima programação mas pouca
+ * liderança rende abaixo do esperado.
+ */
+export function jobPerformance(cold: ColdData, pos: JobPosition): number {
+  const primary = Math.min(1.4, cold.skills[pos.skill] / Math.max(20, pos.minSkill + 20));
+  let score = primary;
+  let weight = 1;
+  if (pos.secondarySkill) {
+    const sec = Math.min(1.4, cold.skills[pos.secondarySkill] / Math.max(20, (pos.minSecondary ?? 20) + 20));
+    score += sec * 0.7;
+    weight += 0.7;
+  }
+  return Math.max(0, Math.min(100, (score / weight) * 100));
+}
 
 /**
  * Mercado de trabalho: contratação, promoção, demissão voluntária,
@@ -38,12 +68,12 @@ export class CareerSystem {
     for (let t = 0; t < tries; t++) {
       const comp = this.hiring[this.rng.int(0, this.hiring.length - 1)];
       if (comp.bankrupt) continue;
-      const skill = c.skills[sectorSkill(comp.sector)];
       for (let level = comp.openings.length - 1; level >= 0; level--) {
         if (comp.openings[level] <= 0) continue;
         const pos = comp.positions[level];
-        if (skill >= pos.minSkill) {
-          const score = pos.salary * (1 + skill / 200);
+        if (meetsRequirements(c, pos)) {
+          // melhores candidatos (mais aderentes ao cargo) preferem ofertas melhores
+          const score = pos.salary * (1 + jobPerformance(c, pos) / 200);
           if (!best || score > best.score) best = { company: comp, level, score };
           break;
         }
@@ -119,10 +149,12 @@ export class CareerSystem {
       const level = hot.jobLevel[i];
       const skill = c.skills[sectorSkill(company.sector)];
 
-      // Promoção: habilidade acima do exigido pelo próximo nível + vaga aberta
+      // Promoção: precisa atender aos requisitos do próximo nível (técnica E
+      // liderança, nos cargos de gestão) + vaga aberta. Quem domina só a parte
+      // técnica fica barrado até desenvolver a liderança exigida.
       if (level < company.positions.length - 1) {
         const next = company.positions[level + 1];
-        if (skill >= next.minSkill && company.openings[level + 1] > 0 && this.rng.chance(0.35)) {
+        if (meetsRequirements(c, next) && company.openings[level + 1] > 0 && this.rng.chance(0.35)) {
           company.openings[level + 1]--;
           company.openings[level]++;
           hot.jobLevel[i] = level + 1;
@@ -148,6 +180,40 @@ export class CareerSystem {
             this.feed({ tick, kind: 'economia', text: `${c.name} trocou a ${hadJob} pela ${newComp.name}` });
           }
         }
+      }
+    }
+  }
+
+  /**
+   * Evolução e ATROFIA mensal de habilidades. Habilidades não são estáticas:
+   *  - quem trabalha desenvolve a competência do setor e, em cargos de gestão, a
+   *    LIDERANÇA exigida (experiência prática → abre caminho para promoção);
+   *  - habilidades que ninguém pratica enferrujam devagar, regredindo a um piso
+   *    ligado à inteligência (talento latente). Assim o destaque de cada um reflete
+   *    o que de fato exercita — estudo e trabalho fazem subir; ócio faz cair.
+   */
+  monthlySkillDrift(tick: number): void {
+    const { hot, cold } = this.world;
+    for (let i = 0; i < this.world.entityRange; i++) {
+      if (!hot.alive[i]) continue;
+      const c = cold[i];
+      if (!c) continue;
+      const age = hot.ageDays[i] / DAYS_PER_YEAR;
+      if (age < CONFIG.ADULT_AGE) continue;
+      const intel = hot.intelligence[i];
+      const floor = intel * 0.12; // talento latente preservado
+      const employed = hot.companyId[i] !== -1 || hot.isOwner[i] === 1;
+      const compId = hot.companyId[i];
+      const usedSkill = compId !== -1 ? sectorSkill(this.companies[compId].sector) : null;
+      const pos = compId !== -1 ? this.companies[compId].positions[Math.max(0, hot.jobLevel[i])] : null;
+      // experiência: prática on-the-job da função (principal + secundária de gestão)
+      if (employed && usedSkill) practiceSkill(c, usedSkill, intel, 0.6);
+      if (pos?.secondarySkill) practiceSkill(c, pos.secondarySkill, intel, 0.5);
+      // atrofia das demais habilidades (não exercitadas neste cargo)
+      for (const s of SKILL_NAMES) {
+        if (s === usedSkill || s === pos?.secondarySkill) continue;
+        const v = c.skills[s];
+        if (v > floor) c.skills[s] = Math.max(floor, v - 0.35);
       }
     }
   }

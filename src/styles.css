@@ -31,7 +31,6 @@ html, body, #root, .app {
 }
 .dashboard h2 { font-size: 16px; margin-bottom: 4px; }
 .dashboard .clock { color: #9aa6c4; margin-bottom: 8px; font-size: 12px; }
-.dashboard .tps { color: #5e6a88; }
 .dashboard table { width: 100%; border-collapse: collapse; }
 .dashboard td { padding: 3px 0; border-bottom: 1px solid rgba(120, 140, 200, 0.1); }
 .dashboard td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
@@ -199,8 +198,6 @@ html, body, #root, .app {
   z-index: 5;
 }
 
-.fps-stats { left: auto !important; right: 350px !important; top: 12px !important; }
-
 /* ============================ MODO CELULAR ============================ */
 .mobile-topbar {
   position: absolute;
@@ -247,7 +244,6 @@ html, body, #root, .app {
 /* Toque: gestos vão para o mapa, não rolam a página */
 .app.mobile { touch-action: none; }
 .app.mobile canvas { touch-action: none !important; }
-.app.mobile .fps-stats { display: none; }
 
 /* Controles de tempo: faixa rolável acima da barra de abas */
 .app.mobile .time-controls {
@@ -349,6 +345,17 @@ html, body, #root, .app {
 .badge.jail { background: rgba(255, 110, 110, 0.2); color: #ff9a9a; }
 .badge.crime { background: rgba(255, 170, 70, 0.18); color: #ffc474; }
 .badge.debt { background: rgba(255, 110, 110, 0.15); color: #ff9a9a; }
+.jail-reason {
+  margin: 6px 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: rgba(255, 110, 110, 0.12);
+  border-left: 3px solid #ff9a9a;
+  border-radius: 4px;
+  color: #ffc0c0;
+}
+.jail-reason.muted { background: rgba(255, 170, 70, 0.1); border-left-color: #ffc474; color: #e0c08a; }
+.skill-req .bar-row > span:first-child { color: #ffd479; font-weight: 600; width: auto; min-width: 90px; }
 .follow-btn {
   width: 100%;
   margin: 8px 0 4px;

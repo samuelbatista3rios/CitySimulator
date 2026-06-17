@@ -14,7 +14,7 @@ const HOT_FIELDS = [
   'targetX', 'targetZ', 'activity', 'activityUntil', 'nextThink', 'homeId',
   'companyId', 'jobLevel', 'partnerId', 'ownsHouse', 'ownsCar', 'isOwner', 'building',
   'creditScore', 'inJail', 'jailUntil', 'isMayor', 'unpaidMonths', 'publicJob',
-  'fulfillment', 'fame', 'criminalRecord',
+  'fulfillment', 'fame', 'criminalRecord', 'lastCrime', 'jailMonths',
 ] as const;
 
 interface SavedCold extends Omit<ColdData, 'relationships'> {

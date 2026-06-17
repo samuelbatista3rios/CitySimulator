@@ -13,6 +13,37 @@ const DAYS_PER_YEAR = CONFIG.DAYS_PER_MONTH * CONFIG.MONTHS_PER_YEAR;
 /** Tipos de crime, do menos ao mais grave (afeta pena, captura e dano à vítima). */
 type CrimeKind = 'furto' | 'roubo' | 'fraude' | 'vandalismo';
 
+/** Código numérico do crime gravado em hot.lastCrime (0 = sem ficha). */
+export const CRIME_CODE: Record<CrimeKind, number> = {
+  furto: 1, roubo: 2, fraude: 3, vandalismo: 4,
+};
+const CRIME_BY_CODE: Record<number, CrimeKind> = {
+  1: 'furto', 2: 'roubo', 3: 'fraude', 4: 'vandalismo',
+};
+
+/** Rótulo legível do crime (ficha do cidadão). */
+export const CRIME_LABEL: Record<CrimeKind, string> = {
+  furto: 'Furto', roubo: 'Roubo (assalto)', fraude: 'Fraude/corrupção', vandalismo: 'Vandalismo',
+};
+
+/** Devolve o rótulo do crime a partir do código (ou null se sem ficha). */
+export function crimeLabelFromCode(code: number): string | null {
+  const k = CRIME_BY_CODE[code];
+  return k ? CRIME_LABEL[k] : null;
+}
+
+/**
+ * Pena-base por gravidade (meses, [mínimo, máximo]). Crimes violentos e de
+ * colarinho branco pesam muito mais que furtos e vandalismo. A reincidência e a
+ * postura do governo (Lei e Ordem vs. plataformas brandas) ajustam a pena final.
+ */
+const SENTENCE_BASE: Record<CrimeKind, [number, number]> = {
+  furto: [3, 8],
+  vandalismo: [2, 5],
+  fraude: [8, 20],
+  roubo: [12, 30],
+};
+
 function violentLabel(kind: CrimeKind): string {
   return kind === 'roubo' ? 'Cometeu um assalto' : 'Cometeu um furto';
 }
@@ -37,6 +68,13 @@ export class InstitutionSystem {
   crimesThisYear = 0;
   arrestsThisYear = 0;
   jailedCount = 0;
+  /** multiplicador temporário de criminalidade (surtos de violência por eventos) */
+  crimeWaveMult = 1;
+  /** tick em que o surto de violência termina */
+  private crimeWaveUntil = 0;
+  /** liberdades concedidas e penas estendidas pela revisão da prefeitura (UI) */
+  parolesThisYear = 0;
+  sentenceExtensionsThisYear = 0;
 
   constructor(
     private world: EcsWorld,
@@ -78,10 +116,21 @@ export class InstitutionSystem {
   }
 
   monthlyCycle(tick: number, gov: Government): void {
+    if (this.crimeWaveUntil && tick >= this.crimeWaveUntil) {
+      this.crimeWaveMult = 1;
+      this.crimeWaveUntil = 0;
+    }
     this.healthcare(gov);
     this.education(gov, tick);
     this.policing(tick, gov);
+    this.reviewSentences(tick, gov);
     this.releaseFromJail(tick);
+  }
+
+  /** Dispara um surto de violência por `months` meses (evento global). */
+  triggerCrimeWave(tick: number, months: number, intensity = 1.8): void {
+    this.crimeWaveMult = intensity;
+    this.crimeWaveUntil = tick + months * TICKS_PER_MONTH;
   }
 
   /** Hospitais tratam os mais doentes, limitado por capacidade × verba. */
@@ -183,8 +232,9 @@ export class InstitutionSystem {
       propensity += fraudUrge;
       propensity *= inequalityMult;
       propensity *= 1 + Math.min(4, hot.criminalRecord[i]) * 0.25; // reincidência
+      propensity *= this.crimeWaveMult; // surto de violência (evento)
       // teto: impede que desigualdade × reincidência se acumulem e estourem
-      propensity = Math.min(propensity, 0.06);
+      propensity = Math.min(propensity, 0.06 * this.crimeWaveMult);
       if (!this.rng.chance(propensity)) continue;
 
       // escolhe o TIPO de crime conforme o perfil
@@ -197,7 +247,7 @@ export class InstitutionSystem {
       if (this.rng.chance(catchRate)) {
         const convictionOdds = 0.5 + gov.policeFunding * 0.3 + Math.min(4, hot.criminalRecord[i]) * 0.05;
         if (this.rng.chance(convictionOdds)) {
-          this.arrest(i, tick, kind);
+          this.arrest(i, tick, kind, gov);
         } else if (this.rng.chance(0.03)) {
           this.feed({ tick, kind: 'social', text: `⚖️ ${c.name} foi absolvido(a) por falta de provas` });
         }
@@ -252,26 +302,84 @@ export class InstitutionSystem {
     remember(c, tick, 'conflito', violentLabel(kind));
   }
 
-  private arrest(id: number, tick: number, kind: CrimeKind): void {
+  private arrest(id: number, tick: number, kind: CrimeKind, gov: Government): void {
     const { hot, cold } = this.world;
     if (hot.companyId[id] !== -1) this.careers.fire(id, tick, 'preso');
     hot.inJail[id] = 1;
     hot.building[id] = -3; // cadeia (culled do render de rua)
     hot.criminalRecord[id] = Math.min(255, hot.criminalRecord[id] + 1); // condenação
-    // pena por gravidade + agravante de reincidência
-    const base: Record<CrimeKind, [number, number]> = {
-      furto: [1, 3], vandalismo: [1, 2], fraude: [3, 6], roubo: [4, 8],
-    };
-    const [lo, hi] = base[kind];
-    const months = this.rng.int(lo, hi) + Math.min(6, hot.criminalRecord[id] - 1);
+    hot.lastCrime[id] = CRIME_CODE[kind]; // motivo gravado na ficha
+    // PENA por gravidade + agravante de reincidência + postura do governo.
+    // Governos "Lei e Ordem" (policiamento alto) endurecem as penas; plataformas
+    // com forte gasto social abrandam (foco em ressocialização).
+    const [lo, hi] = SENTENCE_BASE[kind];
+    const recidivism = Math.min(8, hot.criminalRecord[id] - 1) * 2; // +2 meses por reincidência
+    const stance = 1 + (gov.policy.policing - 0.35) * 0.8 - gov.policy.socialSpending * 0.4;
+    const months = Math.max(
+      1,
+      Math.round((this.rng.int(lo, hi) + recidivism) * Math.max(0.5, stance)),
+    );
+    hot.jailMonths[id] = months;
     hot.jailUntil[id] = tick + months * TICKS_PER_MONTH;
     hot.happiness[id] = Math.max(0, hot.happiness[id] - 15);
     this.arrestsThisYear++;
     this.jailedCount++;
     const c = cold[id];
-    if (c) remember(c, tick, 'conflito', `Condenado(a) por ${kind} a ${months} meses`);
+    if (c) remember(c, tick, 'conflito', `Condenado(a) por ${CRIME_LABEL[kind].toLowerCase()} a ${months} meses de prisão`);
     if (this.rng.chance(0.04)) {
-      this.feed({ tick, kind: 'social', text: `🚓 ${c?.name ?? 'Alguém'} foi condenado(a) por ${kind}` });
+      this.feed({ tick, kind: 'social', text: `🚓 ${c?.name ?? 'Alguém'} foi condenado(a) por ${CRIME_LABEL[kind].toLowerCase()} (${months} meses)` });
+    }
+  }
+
+  /**
+   * REVISÃO DE PENAS pela prefeitura (conselho penitenciário). De tempos em
+   * tempos o município reavalia quem está preso e AJUSTA a pena conforme a
+   * política vigente e o comportamento do detento:
+   *  - LIBERDADE CONDICIONAL (encurta a pena): governos com forte gasto social
+   *    soltam mais cedo réus primários que já cumpriram boa parte da pena, abrindo
+   *    espaço no sistema e investindo em ressocialização.
+   *  - ENDURECIMENTO (estende a pena): governos "Lei e Ordem" prorrogam a pena de
+   *    reincidentes contumazes (crimes graves), priorizando o encarceramento.
+   */
+  private reviewSentences(tick: number, gov: Government): void {
+    const { hot, cold } = this.world;
+    const range = this.world.entityRange;
+    const leniency = gov.policy.socialSpending - gov.policy.policing; // -0.5..+0.55
+    for (let i = 0; i < range; i++) {
+      if (!hot.alive[i] || !hot.inJail[i]) continue;
+      const total = Math.max(1, hot.jailMonths[i]) * TICKS_PER_MONTH;
+      const remaining = hot.jailUntil[i] - tick;
+      const served = 1 - remaining / total; // fração cumprida 0..1
+      const c = cold[i];
+      const code = hot.lastCrime[i];
+      const violent = code === CRIME_CODE.roubo || code === CRIME_CODE.fraude;
+
+      // Liberdade condicional: réu primário/secundário, já cumpriu metade, governo
+      // mais social → solta antes (reduz o que falta).
+      if (leniency > 0 && hot.criminalRecord[i] <= 2 && served > 0.5 && !violent) {
+        if (this.rng.chance(0.25 + leniency * 0.5)) {
+          const cut = Math.ceil(remaining * (0.3 + leniency * 0.3));
+          hot.jailUntil[i] = Math.max(tick, hot.jailUntil[i] - cut);
+          this.parolesThisYear++;
+          if (c) remember(c, tick, 'emprego', 'Recebeu liberdade condicional (pena reduzida)');
+          if (this.rng.chance(0.03)) {
+            this.feed({ tick, kind: 'social', text: `⚖️ ${c?.name ?? 'Detento'} obteve liberdade condicional` });
+          }
+          continue;
+        }
+      }
+
+      // Endurecimento: reincidente contumaz, crime grave, governo Lei e Ordem →
+      // prorroga a pena (revisão para cima).
+      if (gov.policy.policing > 0.5 && hot.criminalRecord[i] >= 3 && violent) {
+        if (this.rng.chance(0.18 + (gov.policy.policing - 0.5) * 0.4)) {
+          const extra = this.rng.int(2, 6);
+          hot.jailMonths[i] += extra;
+          hot.jailUntil[i] += extra * TICKS_PER_MONTH;
+          this.sentenceExtensionsThisYear++;
+          if (c) remember(c, tick, 'conflito', `Pena prorrogada em ${extra} meses (reincidência)`);
+        }
+      }
     }
   }
 
@@ -300,6 +408,8 @@ export class InstitutionSystem {
   resetYearCounters(): void {
     this.crimesThisYear = 0;
     this.arrestsThisYear = 0;
+    this.parolesThisYear = 0;
+    this.sentenceExtensionsThisYear = 0;
   }
 
   onDeath(id: number): void {

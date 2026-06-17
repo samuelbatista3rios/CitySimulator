@@ -32,6 +32,44 @@ const PLATFORMS: Platform[] = [
 ];
 
 /**
+ * Catálogo de POLÍTICAS SOCIAIS por plataforma. Ao ser eleito, o prefeito
+ * implementa os programas da sua plataforma — transferências, saúde, moradia,
+ * educação e segurança comunitária — que produzem efeitos concretos na vida da
+ * população todo mês. Plataformas mais sociais oferecem mais programas; liberais,
+ * quase nenhum (Estado mínimo).
+ */
+export type SocialProgram =
+  | 'renda_basica'
+  | 'bolsa_familia'
+  | 'saude_universal'
+  | 'saude_publica'
+  | 'bolsa_estudo'
+  | 'auxilio_moradia'
+  | 'seguranca_comunitaria'
+  | 'frente_trabalho'
+  | 'auxilio_emergencial';
+
+export const PROGRAM_LABEL: Record<SocialProgram, string> = {
+  renda_basica: '💸 Renda básica',
+  bolsa_familia: '👪 Bolsa família',
+  saude_universal: '🏥 Saúde universal',
+  saude_publica: '⚕️ Saúde pública',
+  bolsa_estudo: '🎓 Bolsa estudo',
+  auxilio_moradia: '🏠 Auxílio-moradia',
+  seguranca_comunitaria: '🛡️ Segurança comunitária',
+  frente_trabalho: '👷 Frente de trabalho',
+  auxilio_emergencial: '🆘 Auxílio emergencial',
+};
+
+const PROGRAMS_BY_PLATFORM: Record<string, SocialProgram[]> = {
+  Progressista: ['renda_basica', 'saude_universal', 'bolsa_estudo', 'auxilio_moradia'],
+  Centro: ['bolsa_familia', 'saude_publica'],
+  Liberal: [],
+  'Lei e Ordem': ['seguranca_comunitaria', 'bolsa_familia'],
+  Reconstrução: ['frente_trabalho', 'auxilio_emergencial', 'bolsa_familia'],
+};
+
+/**
  * Governo municipal com POLÍTICA ECONÔMICA EMERGENTE.
  *
  * O prefeito é eleito pela população (voto guiado por personalidade, bolso e,
@@ -76,6 +114,8 @@ export class Government {
   eduFunding = 0.5;
   // economia
   subsidyAllocated = 0; // teto de subsídio disponibilizado à economia neste mês
+  /** políticas sociais em vigor (definidas pela plataforma do prefeito eleito) */
+  socialPrograms: SocialProgram[] = [];
   publicEmployees = new Set<number>();
   emergencyThisMonth = false;
   lastSubsidySpent = 0;
@@ -130,7 +170,107 @@ export class Government {
 
     this.managePublicSector(economy, unemployedIds);
     this.spendBudget();
+    this.applySocialPrograms(tick, economy);
     this.manageDebt();
+  }
+
+  /**
+   * Aplica os efeitos mensais das POLÍTICAS SOCIAIS em vigor sobre a população.
+   * Cada programa tem um custo (sai do caixa) e um efeito concreto e direcionado:
+   * transferências chegam a quem é pobre, saúde recupera os doentes, moradia
+   * alivia o aluguel dos vulneráveis, educação acelera o capital humano dos jovens
+   * de origem humilde e a segurança comunitária reforça a sensação de proteção.
+   */
+  private applySocialPrograms(tick: number, economy: EconomySystem): void {
+    if (this.socialPrograms.length === 0) return;
+    const { hot, cold } = this.world;
+    const pl = economy.priceLevel;
+    const has = (p: SocialProgram) => this.socialPrograms.includes(p);
+    // orçamento social disponível (não gasta o que não tem; gera déficit moderado)
+    let pool = Math.max(0, Math.max(this.budget, this.lastMonthRevenue) * 0.25 * this.austerity);
+    const spend = (amount: number) => { const a = Math.min(amount, pool); pool -= a; this.budget -= a; return a; };
+
+    const incomeFloor = (poorBelow: number, grant: number) => {
+      for (let i = 0; i < this.world.entityRange; i++) {
+        if (!hot.alive[i] || hot.inJail[i]) continue;
+        const age = hot.ageDays[i] / DAYS_PER_YEAR;
+        if (age < CONFIG.ADULT_AGE) continue;
+        if (hot.money[i] < poorBelow * pl) {
+          const g = spend(grant * pl);
+          if (g <= 0) break;
+          hot.money[i] += g;
+          hot.safety[i] = Math.min(100, hot.safety[i] + 2);
+          hot.happiness[i] = Math.min(100, hot.happiness[i] + 1.5);
+        }
+      }
+    };
+
+    if (has('renda_basica')) incomeFloor(4000, 900);
+    if (has('bolsa_familia')) {
+      // famílias pobres COM filhos recebem transferência condicionada
+      for (let i = 0; i < this.world.entityRange; i++) {
+        if (!hot.alive[i] || hot.inJail[i]) continue;
+        const c = cold[i];
+        if (!c || c.children.length === 0) continue;
+        if (hot.money[i] < 3000 * pl) {
+          const g = spend(500 * pl * Math.min(3, c.children.length));
+          if (g <= 0) break;
+          hot.money[i] += g;
+          hot.happiness[i] = Math.min(100, hot.happiness[i] + 1.5);
+        }
+      }
+    }
+    if (has('auxilio_emergencial')) incomeFloor(2500, 1200);
+
+    if (has('saude_universal') || has('saude_publica')) {
+      const boost = has('saude_universal') ? 10 : 6;
+      const cap = has('saude_universal') ? 0.5 : 0.3;
+      let treated = 0; const limit = Math.ceil(this.world.aliveCount * cap);
+      for (let i = 0; i < this.world.entityRange && treated < limit; i++) {
+        if (!hot.alive[i] || hot.health[i] >= 60) continue;
+        if (spend(80 * pl) <= 0) break;
+        hot.health[i] = Math.min(100, hot.health[i] + boost);
+        treated++;
+      }
+    }
+    if (has('auxilio_moradia')) {
+      // alivia o aluguel dos vulneráveis (devolve parte do custo de moradia)
+      for (let i = 0; i < this.world.entityRange; i++) {
+        if (!hot.alive[i] || hot.inJail[i] || hot.ownsHouse[i]) continue;
+        if (hot.money[i] < 3500 * pl) {
+          const g = spend(300 * pl);
+          if (g <= 0) break;
+          hot.money[i] += g;
+          hot.safety[i] = Math.min(100, hot.safety[i] + 3);
+        }
+      }
+    }
+    if (has('bolsa_estudo')) {
+      // jovens de origem humilde ganham capital humano (inteligência)
+      for (let i = 0; i < this.world.entityRange; i++) {
+        if (!hot.alive[i]) continue;
+        const age = hot.ageDays[i] / DAYS_PER_YEAR;
+        if (age < 6 || age > 24) continue;
+        const c = cold[i];
+        if (!c) continue;
+        let parentWealth = 0;
+        for (const p of c.parents) parentWealth += hot.money[p] ?? 0;
+        if (c.parents.length && parentWealth / c.parents.length < 8000 * pl) {
+          if (spend(40 * pl) <= 0) break;
+          hot.intelligence[i] = Math.min(100, hot.intelligence[i] + 0.5);
+        }
+      }
+    }
+    if (has('seguranca_comunitaria')) {
+      // policiamento comunitário: reforça a sensação de segurança de todos
+      const cost = spend(this.world.aliveCount * 6 * pl);
+      if (cost > 0) {
+        for (let i = 0; i < this.world.entityRange; i++) {
+          if (hot.alive[i] && !hot.inJail[i]) hot.safety[i] = Math.min(100, hot.safety[i] + 1.5);
+        }
+      }
+    }
+    // 'frente_trabalho' é executada pelo programa de empregos públicos (publicJobs)
   }
 
   /**
@@ -218,6 +358,7 @@ export class Government {
     const total = votes.reduce((a, b) => a + b, 0) || 1;
     const pct = Math.round((votes[winner] / total) * 100);
     this.policy = { ...PLATFORMS[winner] };
+    this.socialPrograms = [...(PROGRAMS_BY_PLATFORM[this.policy.name] ?? [])];
     this.recallThisMonth = recall;
     this.approval = 55; // novo mandato começa com leve "lua de mel"
 
@@ -236,6 +377,11 @@ export class Government {
         : '🗳️ ELEIÇÃO';
       this.feed({ tick, kind: 'global', text: `${tag}: ${name} eleito(a) prefeito(a) — ${this.policy.name} (${pct}%)` });
       this.feed({ tick, kind: 'global', text: `📜 NOVA LEI: imposto ${Math.round(this.policy.taxRate * 100)}% · sal. mín. $${Math.round(this.policy.minimumWage).toLocaleString('pt-BR')} · subsídio ${Math.round(this.policy.businessSubsidy * 100)}% · empregos públicos ${Math.round(this.policy.publicJobs * 100)}%` });
+      if (this.socialPrograms.length > 0) {
+        this.feed({ tick, kind: 'global', text: `🤝 POLÍTICAS SOCIAIS: ${this.socialPrograms.map((p) => PROGRAM_LABEL[p]).join(' · ')}` });
+      } else {
+        this.feed({ tick, kind: 'global', text: `🤝 Gestão de Estado mínimo — sem programas sociais` });
+      }
     }
   }
 
@@ -408,6 +554,7 @@ export class Government {
       nextElectionTick: this.nextElectionTick, lastElectionTick: this.lastElectionTick,
       publicEmployees: [...this.publicEmployees], approval: this.approval,
       debt: this.debt, lastMonthRevenue: this.lastMonthRevenue,
+      socialPrograms: this.socialPrograms,
     };
   }
   restore(d: ReturnType<Government['dump']>): void {
@@ -423,5 +570,6 @@ export class Government {
     this.approval = d.approval ?? 50;
     this.debt = d.debt ?? 0;
     this.lastMonthRevenue = d.lastMonthRevenue ?? 0;
+    this.socialPrograms = (d as any).socialPrograms ?? PROGRAMS_BY_PLATFORM[this.policy.name] ?? [];
   }
 }

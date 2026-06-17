@@ -172,6 +172,11 @@ export class EconomySystem {
         const ce = cold[emp];
         if (ce) {
           teamQuality += ce.skills[skillName] * 0.5 + (EDU_VALUE[ce.education] ?? 40) * 0.3 + hot.happiness[emp] * 0.2;
+          // LIDERANÇA dos cargos de gestão eleva (ou derruba) a produtividade da
+          // equipe: um gestor alinhado à função multiplica o time; mal alinhado,
+          // emperra. É o elo entre "habilidades de destaque" e desempenho real.
+          const pos = company.positions[Math.max(0, hot.jobLevel[emp])];
+          if (pos.secondarySkill) teamQuality += (ce.skills[pos.secondarySkill] - 45) * 0.12;
           teamN++;
         }
       }
@@ -332,6 +337,24 @@ export class EconomySystem {
         const pension = Math.max(this.minimumWage, CONFIG.BASE_SALARY * 0.8 * this.wageLevel) * 0.8;
         hot.money[i] += pension;
         this.taxPool -= pension;
+      }
+      // CONSUMO DE LUXO (realismo de riqueza): patrimônio muito acima do custo de
+      // vida não cresce indefinidamente — os mais ricos gastam parte do excedente
+      // em bens e serviços de alto padrão, que viram RECEITA das empresas. Isso
+      // drena a acumulação explosiva (evita fortunas irreais de dezenas de milhões)
+      // sem confiscar: o dinheiro circula de volta para a economia.
+      const luxThreshold = 150_000 * this.priceLevel;
+      if (hot.money[i] > luxThreshold && !hot.inJail[i]) {
+        // quanto maior a fortuna, maior a fração consumida (progressivo, teto 12%)
+        const excess = hot.money[i] - luxThreshold;
+        const rate = Math.min(0.12, 0.05 + excess / (4_000_000 * this.priceLevel));
+        const lux = excess * rate;
+        hot.money[i] -= lux;
+        consumption += lux;
+        this.spend('comercio', lux * 0.35);
+        this.spend('servicos', lux * 0.3);
+        this.spend('cultura', lux * 0.2);
+        this.spend('esporte', lux * 0.15);
       }
       // segurança financeira influencia a necessidade de segurança
       if (hot.money[i] < 0) {

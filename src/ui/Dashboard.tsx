@@ -67,7 +67,6 @@ export function Dashboard() {
       <h2>📊 Genesis City</h2>
       <div className="clock">
         Ano {stats.year} · Mês {stats.month} · Dia {stats.day} · {String(stats.hour).padStart(2, '0')}h
-        <span className="tps"> · {stats.fps.toFixed(0)} ticks/s</span>
       </div>
       {stats.eventoAtivo && <div className="event-banner">{stats.eventoAtivo}</div>}
       <table>

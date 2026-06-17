@@ -72,6 +72,8 @@ export class HotComponents {
   unpaidMonths: Uint8Array; // meses de contas atrasadas (inadimplência)
   publicJob: Uint8Array; // empregado no setor público (programa de empregos)
   criminalRecord: Uint8Array; // nº de condenações (ficha criminal → reincidência)
+  lastCrime: Uint8Array; // último crime cometido/condenado (0=nenhum; ver CRIME_CODE)
+  jailMonths: Int32Array; // pena total (meses) da condenação atual — base p/ revisão
 
   constructor(capacity: number = CONFIG.MAX_CITIZENS) {
     this.capacity = capacity;
@@ -112,6 +114,8 @@ export class HotComponents {
     this.unpaidMonths = new Uint8Array(capacity);
     this.publicJob = new Uint8Array(capacity);
     this.criminalRecord = new Uint8Array(capacity);
+    this.lastCrime = new Uint8Array(capacity);
+    this.jailMonths = new Int32Array(capacity);
   }
 }
 

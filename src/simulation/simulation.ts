@@ -16,8 +16,9 @@ import { CareerSystem } from './economy/careers';
 import { EconomySystem } from './economy/economy';
 import { Bank } from './economy/bank';
 import { HousingMarket } from './economy/housing';
-import { Government } from './government/government';
-import { InstitutionSystem } from './institutions/institutions';
+import { Government, PROGRAM_LABEL } from './government/government';
+import { InstitutionSystem, crimeLabelFromCode } from './institutions/institutions';
+import { jobPerformance } from './economy/careers';
 import { GlobalEventSystem } from './events/globalEvents';
 import { TrafficSystem } from './traffic/traffic';
 import { buildVenues, chooseVenue, applyVenueVisit, VENUE_INFO, VENUE_SECTOR, type Venue } from './world/venues';
@@ -108,6 +109,12 @@ export class Simulation {
       housingShock: (mult) => { this.housing.priceIndex = Math.max(0.4, Math.min(6, this.housing.priceIndex * mult)); },
       approvalDelta: (d) => { this.government.approval = Math.max(0, Math.min(100, this.government.approval + d)); },
       budgetInject: (amt) => { this.government.budget += amt; },
+      cityMood: (d) => this.applyToAll((i) => { this.world.hot.happiness[i] = clamp100(this.world.hot.happiness[i] + d); }),
+      cityHealth: (d) => this.applyToAll((i) => { this.world.hot.health[i] = clamp100(this.world.hot.health[i] + d); }),
+      citySafety: (d) => this.applyToAll((i) => { this.world.hot.safety[i] = clamp100(this.world.hot.safety[i] + d); }),
+      cityFulfillment: (d) => this.applyToAll((i) => { this.world.hot.fulfillment[i] = clamp100(this.world.hot.fulfillment[i] + d); }),
+      jobFair: (intensity) => this.runJobFair(intensity),
+      crimeWave: (months, intensity) => this.institutions.triggerCrimeWave(this.tick, months, intensity),
     };
     this.traffic = new TrafficSystem(this.rng, this.city.worldSize, this.city.blockSpan);
     // trânsito não cruza o lago nem o complexo do estádio
@@ -189,6 +196,7 @@ export class Simulation {
       this.economy.monthlyCycle(this.tick);
       this.housing.sortWealthIntoNoble(this.economy.priceLevel); // mobilidade p/ o bairro nobre
       this.institutions.monthlyCycle(this.tick, this.government); // saúde, educação, crime/polícia
+      this.careers.monthlySkillDrift(this.tick); // experiência faz subir; ócio faz cair
       this.careers.monthlyCareerMoves(this.tick);
       this.relationships.monthlyCouples(this.tick);
       this.lifecycle.healthcareAccess = this.government.healthFunding; // saúde pública ↓ mortalidade
@@ -558,6 +566,27 @@ export class Simulation {
     }
   }
 
+  /** Aplica um efeito a todos os cidadãos vivos (eventos coletivos). */
+  private applyToAll(fn: (i: number) => void): void {
+    const { hot } = this.world;
+    for (let i = 0; i < this.world.entityRange; i++) if (hot.alive[i]) fn(i);
+  }
+
+  /** Mutirão de empregos: tenta recolocar desempregados em idade ativa. */
+  private runJobFair(intensity: number): void {
+    const { hot } = this.world;
+    this.careers.rebuildHiringIndex();
+    let hired = 0;
+    const cap = Math.ceil(this.world.aliveCount * 0.02 * intensity);
+    for (let i = 0; i < this.world.entityRange && hired < cap; i++) {
+      if (!hot.alive[i] || hot.inJail[i]) continue;
+      const age = hot.ageDays[i] / DAYS_PER_YEAR;
+      if (age < CONFIG.ADULT_AGE || age >= CONFIG.RETIREMENT_AGE) continue;
+      if (hot.companyId[i] !== -1 || hot.isOwner[i] || hot.publicJob[i]) continue;
+      if (this.careers.tryGetJob(i, this.tick)) hired++;
+    }
+  }
+
   /** Empreendedorismo: cria empresa nova num prédio comercial com vaga. */
   private foundCompany(i: number): void {
     const { hot, cold } = this.world;
@@ -788,6 +817,9 @@ export class Simulation {
       empregosPublicos: this.government.publicEmployees.size,
       subsidioEmpresas: this.government.lastSubsidySpent,
       medidaEmergencia: this.government.emergencyThisMonth,
+      politicasSociais: this.government.socialPrograms.map((p) => PROGRAM_LABEL[p]),
+      liberdadesCondicionais: this.institutions.parolesThisYear,
+      penasProrrogadas: this.institutions.sentenceExtensionsThisYear,
       realizacaoMedia: pop > 0 ? fulfillSum / pop : 0,
       atletas,
       religiosos: pop > 0 ? (religiosos / pop) * 100 : 0,
@@ -813,6 +845,29 @@ export class Simulation {
       .map((r) => ({ id: r.otherId, nome: nameOf(r.otherId), forca: Math.round(r.strength) }));
     const partner = hot.partnerId[id];
     const compId = hot.companyId[id];
+    // desempenho no cargo atual (alinhamento das habilidades à função)
+    let desempenho: number | null = null;
+    let requisitos: CitizenDetail['requisitos'] = null;
+    if (compId !== -1) {
+      const pos = this.companies[compId].positions[Math.max(0, hot.jobLevel[id])];
+      if (pos) {
+        desempenho = Math.round(jobPerformance(c, pos));
+        requisitos = {
+          skill: pos.skill,
+          min: pos.minSkill,
+          secondary: pos.secondarySkill,
+          minSecondary: pos.minSecondary,
+        };
+      }
+    }
+    // motivo da prisão (crime + pena + meses restantes) e último crime na ficha
+    let motivoPrisao: string | null = null;
+    if (hot.inJail[id]) {
+      const crime = crimeLabelFromCode(hot.lastCrime[id]) ?? 'crime';
+      const restante = Math.max(0, Math.ceil((hot.jailUntil[id] - this.tick) / TICKS_PER_MONTH));
+      motivoPrisao = `${crime} · pena de ${hot.jailMonths[id]} meses · faltam ${restante} mês(es)`;
+    }
+    const ultimoCrime = crimeLabelFromCode(hot.lastCrime[id]);
     return {
       id,
       nome: c.name,
@@ -831,6 +886,8 @@ export class Simulation {
       profissao: c.professionTitle,
       empresa: compId !== -1 ? this.companies[compId].name : null,
       escolaridade: c.education,
+      desempenho,
+      requisitos,
       atividade: ACTIVITY_LABELS[hot.activity[id]] ?? 'Ocioso',
       necessidades: {
         fome: Math.round(hot.hunger[id]),
@@ -863,6 +920,8 @@ export class Simulation {
       preso: hot.inJail[id] === 1,
       criminoso: hot.criminalRecord[id] > 0 || c.memory.some((m) => m.text.startsWith('Cometeu')),
       fichaCriminal: hot.criminalRecord[id],
+      motivoPrisao,
+      ultimoCrime,
       scoreCredito: Math.round(hot.creditScore[id]),
       emprestimos: this.bank.loanViews(id),
       contasAtrasadas: hot.unpaidMonths[id],
@@ -1147,4 +1206,8 @@ export class Simulation {
 
 function hour(tick: number): number {
   return tick % CONFIG.TICKS_PER_DAY;
+}
+
+function clamp100(v: number): number {
+  return Math.max(0, Math.min(100, v));
 }

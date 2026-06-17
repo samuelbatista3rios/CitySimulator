@@ -12,6 +12,13 @@ export interface EventHooks {
   housingShock?: (mult: number) => void;        // choque imobiliário
   approvalDelta?: (delta: number) => void;      // escândalo / boa notícia política
   budgetInject?: (amount: number) => void;      // pacote de estímulo
+  // ---- efeitos diretos sobre os cidadãos
+  cityMood?: (delta: number) => void;            // alegria/tristeza coletiva (felicidade)
+  cityHealth?: (delta: number) => void;          // saúde da população (epidemia/campanha)
+  citySafety?: (delta: number) => void;          // sensação de segurança
+  cityFulfillment?: (delta: number) => void;     // realização/cultura coletiva
+  jobFair?: (intensity: number) => void;         // mutirão de empregos (contrata desempregados)
+  crimeWave?: (months: number, intensity: number) => void; // surto de violência
 }
 
 interface InstantEvent {
@@ -60,6 +67,48 @@ const INSTANT: InstantEvent[] = [
   {
     monthlyChance: 0.010,
     fire: (eco, h) => { const n = h.mergeCompanies?.(); return n ? `🤝 Megafusão corporativa cria a gigante ${n}` : null; },
+  },
+  {
+    monthlyChance: 0.011,
+    fire: (eco, h) => { h.jobFair?.(1); return '💼 Mutirão de empregos: feirão municipal contrata desempregados'; },
+  },
+  // ---- Sociedade / cultura (bons)
+  {
+    monthlyChance: 0.013,
+    fire: (eco, h) => { h.cityMood?.(7); h.cityFulfillment?.(6); return '🎉 Festival cultural anima a cidade'; },
+  },
+  {
+    monthlyChance: 0.010,
+    fire: (eco, h) => { h.cityHealth?.(8); return '💉 Campanha de vacinação melhora a saúde pública'; },
+  },
+  {
+    monthlyChance: 0.008,
+    fire: (eco, h) => { eco.priceLevel *= 0.97; h.cityMood?.(3); return '🌾 Safra recorde: alimentos ficam mais baratos'; },
+  },
+  {
+    monthlyChance: 0.007,
+    fire: (eco, h) => { h.cityFulfillment?.(5); h.cityMood?.(4); return '🏆 Time da cidade conquista um título e enche a torcida de orgulho'; },
+  },
+  // ---- Sociedade / desastres (ruins)
+  {
+    monthlyChance: 0.009,
+    fire: (eco, h) => { h.cityHealth?.(-10); h.cityMood?.(-4); return '🌡️ Onda de calor e estiagem castigam a população'; },
+  },
+  {
+    monthlyChance: 0.008,
+    fire: (eco, h) => { h.cityMood?.(-6); h.citySafety?.(-8); return '⚡ Apagão deixa a cidade no escuro por dias'; },
+  },
+  {
+    monthlyChance: 0.007,
+    fire: (eco, h) => { h.crimeWave?.(3, 1.9); h.citySafety?.(-12); return '🔫 Onda de violência assusta os bairros'; },
+  },
+  {
+    monthlyChance: 0.006,
+    fire: (eco, h) => { h.cityHealth?.(-12); h.housingShock?.(0.95); return '🌊 Enchente atinge bairros e desaloja famílias'; },
+  },
+  {
+    monthlyChance: 0.006,
+    fire: (eco, h) => { eco.priceLevel *= 1.05; h.cityMood?.(-5); return '🏭 Greve geral paralisa serviços e pressiona os preços'; },
   },
 ];
 

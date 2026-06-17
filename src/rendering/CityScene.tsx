@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { MapControls, Stats } from '@react-three/drei';
+import { MapControls } from '@react-three/drei';
 import type { MapControls as MapControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
 import { Ground } from './Ground';
@@ -68,7 +68,6 @@ export function CityScene() {
         dampingFactor={0.08}
       />
       <FollowCamera controls={controls} />
-      <Stats className="fps-stats" />
     </Canvas>
   );
 }

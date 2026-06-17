@@ -106,8 +106,11 @@ export const ACTIVITY_LABELS: Record<number, string> = {
 export interface JobPosition {
   title: string;
   salary: number;
-  skill: SkillName;
+  skill: SkillName; // habilidade principal do cargo
   minSkill: number;
+  /** habilidade secundária exigida (ex.: liderança em cargos de gestão) */
+  secondarySkill?: SkillName;
+  minSecondary?: number;
   level: number; // 0 = júnior ... 3 = diretor
 }
 
@@ -210,6 +213,9 @@ export interface CityStats {
   empregosPublicos: number;
   subsidioEmpresas: number; // gasto em subsídio no mês
   medidaEmergencia: boolean; // eleição/medida extraordinária por crise
+  politicasSociais: string[]; // rótulos das políticas sociais em vigor
+  liberdadesCondicionais: number; // liberdades condicionais concedidas no ano
+  penasProrrogadas: number; // penas estendidas pela revisão no ano
   // Cultura, fé e esporte
   realizacaoMedia: number; // satisfação de vida média 0..100
   atletas: number; // atletas profissionais
@@ -255,6 +261,10 @@ export interface CitizenDetail {
   profissao: string;
   empresa: string | null;
   escolaridade: EducationLevel;
+  /** desempenho no cargo atual 0..100 (alinhamento das habilidades à função) */
+  desempenho: number | null;
+  /** habilidades exigidas pelo cargo atual (para comparar com as do cidadão) */
+  requisitos: { skill: SkillName; min: number; secondary?: SkillName; minSecondary?: number } | null;
   atividade: string;
   necessidades: { fome: number; sono: number; social: number; seguranca: number; diversao: number };
   realizacao: number; // 0..100 — satisfação de vida (lazer, fé, hobbies, fama)
@@ -280,6 +290,10 @@ export interface CitizenDetail {
   preso: boolean;
   criminoso: boolean;
   fichaCriminal: number; // nº de condenações
+  /** motivo da prisão atual (crime + pena + meses restantes), se preso */
+  motivoPrisao: string | null;
+  /** último crime registrado na ficha (rótulo), se houver */
+  ultimoCrime: string | null;
   scoreCredito: number;
   emprestimos: LoanView[];
   contasAtrasadas: number;

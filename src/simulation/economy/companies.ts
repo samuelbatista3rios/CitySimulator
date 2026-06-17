@@ -65,13 +65,24 @@ const ZONE_SECTORS: Record<string, Sector[]> = {
 export function makePositions(rng: RNG, sector: Sector, wageMultiplier: number): JobPosition[] {
   const titles = SECTOR_TITLES[sector];
   const skill = SECTOR_SKILL[sector];
-  return titles.map((title, level) => ({
-    title,
-    skill,
-    level,
-    minSkill: 10 + level * 22,
-    salary: Math.round(CONFIG.BASE_SALARY * Math.pow(2.1, level) * rng.range(0.85, 1.25) * wageMultiplier),
-  }));
+  return titles.map((title, level) => {
+    const pos: JobPosition = {
+      title,
+      skill,
+      level,
+      minSkill: 10 + level * 22,
+      salary: Math.round(CONFIG.BASE_SALARY * Math.pow(2.1, level) * rng.range(0.85, 1.25) * wageMultiplier),
+    };
+    // CARGOS DE GESTÃO (nível ≥ 2: Tech Lead/CTO, Gerente/Diretor...) exigem
+    // LIDERANÇA além da competência técnica — um ótimo programador só vira bom
+    // Tech Lead se também desenvolveu liderança. Setores cujo skill principal já
+    // é liderança usam consciência social (vendas) como secundária.
+    if (level >= 2) {
+      pos.secondarySkill = skill === 'lideranca' ? 'vendas' : 'lideranca';
+      pos.minSecondary = (level - 1) * 24; // nível 2 → 24, nível 3 → 48
+    }
+    return pos;
+  });
 }
 
 export function createCompany(

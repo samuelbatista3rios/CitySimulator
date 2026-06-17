@@ -9,6 +9,7 @@ const PLATFORMS: Record<string, { cor: string; desc: string }> = {
   Centro: { cor: '#9aa6c4', desc: 'Equilíbrio entre imposto, serviços e segurança.' },
   Liberal: { cor: '#7fce7f', desc: 'Imposto baixo e Estado enxuto; foco no setor privado.' },
   'Lei e Ordem': { cor: '#e1a95b', desc: 'Forte investimento em segurança pública e policiamento.' },
+  Reconstrução: { cor: '#d98be0', desc: 'Subsídio a empresas e frentes de trabalho para reerguer a economia.' },
 };
 
 /**
@@ -112,6 +113,27 @@ export function LawsPanel() {
             <td>Próxima eleição</td>
             <td>{stats ? `em ${stats.proximaEleicaoAnos.toFixed(1)} anos` : '—'}</td>
           </tr>
+        </tbody>
+      </table>
+
+      <h3>🤝 Políticas sociais em vigor</h3>
+      {stats && stats.politicasSociais.length > 0 ? (
+        <ul className="law-effects">
+          {stats.politicasSociais.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">Nenhuma política social ativa (gestão de Estado mínimo).</p>
+      )}
+
+      <h3>⚖️ Justiça & administração penal</h3>
+      <table className="law-table">
+        <tbody>
+          <tr><td>Presos atualmente</td><td>{stats ? stats.presos.toLocaleString('pt-BR') : '—'}</td></tr>
+          <tr><td>Prisões no ano</td><td>{stats ? stats.prisoesAno.toLocaleString('pt-BR') : '—'}</td></tr>
+          <tr><td>Liberdades condicionais (ano)</td><td>{stats ? stats.liberdadesCondicionais.toLocaleString('pt-BR') : '—'}</td></tr>
+          <tr><td>Penas prorrogadas (ano)</td><td>{stats ? stats.penasProrrogadas.toLocaleString('pt-BR') : '—'}</td></tr>
         </tbody>
       </table>
 

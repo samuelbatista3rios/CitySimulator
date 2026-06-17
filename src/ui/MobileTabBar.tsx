@@ -1,9 +1,10 @@
 import { useGenesis } from '../state/store';
 
-const TABS: { key: 'stats' | 'laws' | 'empresas' | 'busca'; icon: string; label: string }[] = [
+const TABS: { key: 'stats' | 'laws' | 'empresas' | 'busca' | 'monitor'; icon: string; label: string }[] = [
   { key: 'stats', icon: '📊', label: 'Cidade' },
   { key: 'laws', icon: '📜', label: 'Leis' },
   { key: 'empresas', icon: '🏢', label: 'Empresas' },
+  { key: 'monitor', icon: '📈', label: 'Monitor' },
   { key: 'busca', icon: '🔎', label: 'Buscar' },
 ];
 
